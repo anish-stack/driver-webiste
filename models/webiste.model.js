@@ -138,6 +138,10 @@ const WebsiteSchema = new mongoose.Schema(
       type: SectionsSchema,
       default: {},
     },
+    QrCode:{
+      url:String,
+      publicId:String
+    },
 
     paidTill: {
       type: Date,

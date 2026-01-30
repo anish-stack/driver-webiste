@@ -4,6 +4,7 @@ const Package = require("../models/default.package.model");
 const Website = require("../models/webiste.model");
 const { uploadBuffer, deleteFile } = require("../utils/uploadToCloudinary");
 const mongoose = require("mongoose");
+const QRCode = require("qrcode");
 
 const getOrCreateWebsite = async (driverId, themeId = null) => {
     let website = await Website.findOne({ driverId });
@@ -562,3 +563,43 @@ exports.deleteWebsite = asyncHandler(async (req, res) => {
         message: "Website deleted successfully",
     });
 });
+
+
+
+exports.genrateQrCodeForWebsite = async (req, res) => {
+  try {
+    const { driverId, themeId } = req.query;
+
+    if (!driverId || !themeId) {
+      return res.status(400).json({
+        success: false,
+        message: "driverId and themeId are required",
+      });
+    }
+
+    const url = `https://taxisafar.com/${driverId}/${themeId}`;
+
+    // Generate QR as base64
+    const qrCodeBase64 = await QRCode.toDataURL(url, {
+      width: 380,
+      margin: 2,
+    });
+
+    
+
+    res.status(201).json({
+      success: true,
+      message: "QR generated successfully",
+      data: {
+        url,
+        qrCode: qrCodeBase64, // frontend can directly show this
+      },
+    });
+  } catch (error) {
+    console.error("QR ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate QR code",
+    });
+  }
+};

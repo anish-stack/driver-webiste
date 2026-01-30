@@ -16,6 +16,7 @@ const {
   toggleLiveStatus,
   getWebsite,
   deleteWebsite,
+  genrateQrCodeForWebsite,
 } = require("../controllers/website.controller");
 
 router.get("/:driverId", getWebsite);
@@ -39,5 +40,10 @@ router.patch("/:driverId/sections", updateSections);
 router.patch("/:driverId/live-status", toggleLiveStatus);
 
 router.delete("/:driverId", deleteWebsite);
+
+
+
+router.post("/qr-code", genrateQrCodeForWebsite);
+
 
 module.exports = router;

@@ -22,6 +22,9 @@
     "moongoose": "^0.0.5",
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
+    "qrcode": "^1.5.4",
+    "qrcode-with-logos": "^1.1.1",
+    "razorpay": "^2.9.6",
     "streamifier": "^0.1.1"
   }
 }

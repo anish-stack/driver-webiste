@@ -12,6 +12,8 @@ const healthRoutes = require("./routes/health.route");
 const ThemeRoutes = require("./routes/Theme.routes");
 const PackagesRoutes = require("./routes/Package.routes");
 const WebsiteRoutes = require("./routes/website.route");
+const ContactRoutes = require("./routes/contact.routes")
+const TripRoutes = require("./routes/trip.routes")
 
 
 
@@ -47,6 +49,9 @@ app.use("/api", healthRoutes);
 app.use("/api/theme", ThemeRoutes)
 app.use("/api/package", PackagesRoutes)
 app.use("/api/website", WebsiteRoutes)
+app.use("/api/contact", ContactRoutes)
+app.use("/api/trip", TripRoutes)
+
 
 /* -------------------- 404 Handler -------------------- */
 app.use(notFound);

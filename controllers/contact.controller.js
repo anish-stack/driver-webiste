@@ -3,50 +3,41 @@ const { sendWhatsappTemplateForContactForm } = require("../utils/sendWhatsappTem
 
 exports.createContact = async (req, res) => {
   try {
-    const {
-      f_name,
-      p_number,
-      e_address,
-      t_type,
-      message,
-      driver_id,
-      driverWhatsapp,
-      websiteName,
-    } = req.body;
+    const { name, phone, email, tripType, message, website } = req.body;
 
-    // 1️⃣ Save contact in DB
+    // 1️⃣ Save contact correctly
     const contact = await Contact.create({
-      f_name,
-      p_number,
-      e_address,
-      t_type,
+      f_name: name,
+      p_number: phone,
+      e_address: email,
+      t_type: tripType,
       message,
-      driver_id,
+      driver_id: website?.driverId, // must match schema type
     });
 
-    // 2️⃣ Send WhatsApp to driver
-    if (driverWhatsapp) {
+    // 2️⃣ Send WhatsApp
+    if (website?.basicInfo?.whatsapp) {
+      console.log("Start")
       try {
         await sendWhatsappTemplateForContactForm({
           templateName: "contact_form_driver_webiste",
-
-          websiteName: websiteName || "TaxiSafar",
-          tripType: t_type,
-          customerName: f_name,
-          customerPhone: p_number,
+          websiteName: website?.basicInfo?.name,
+          tripType,
+          customerName: name,
+          customerPhone: phone,
           messageText: message,
-
-          driverWhatsapp,
+          driverWhatsapp: website?.basicInfo?.whatsapp,
           id: contact._id,
         });
 
         contact.is_whatsapp_send = true;
         await contact.save();
+        console.log("End")
+
       } catch (waErr) {
         console.error("WhatsApp send failed:", waErr.message);
       }
     }
-
     return res.status(201).json({
       success: true,
       message: "Contact enquiry submitted successfully",
@@ -60,6 +51,7 @@ exports.createContact = async (req, res) => {
     });
   }
 };
+
 
 
 exports.getAllContacts = async (req, res) => {

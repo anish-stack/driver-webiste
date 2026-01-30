@@ -40,7 +40,7 @@ const contactSchema = new mongoose.Schema(
     },
 
     driver_id: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
       index: true,
     },
   },

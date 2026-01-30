@@ -121,7 +121,6 @@ async function sendWhatsappTemplateForContactForm(bookingData) {
                 Accept: "application/json",
             },
         });
-
         return response.data;
     } catch (err) {
         console.error("❌ WhatsApp Error:", err.response?.data || err.message);
