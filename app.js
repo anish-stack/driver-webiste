@@ -7,7 +7,7 @@ const corsConfig = require("./config/cors");
 const ENV = require("./config/env");
 const globalErrorHandler = require("./middlewares/error.middleware");
 const notFound = require("./middlewares/notFound.middleware");
-
+// add
 const healthRoutes = require("./routes/health.route");
 const ThemeRoutes = require("./routes/Theme.routes");
 const PackagesRoutes = require("./routes/Package.routes");
@@ -25,14 +25,14 @@ app.use(helmet());
 app.use(corsConfig);
 
 /* -------------------- Rate Limiting -------------------- */
-app.use(
-  rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    standardHeaders: true,
-    legacyHeaders: false,
-  })
-);
+// app.use(
+//   rateLimit({
+//     windowMs: 15 * 60 * 1000,
+//     max: 100,
+//     standardHeaders: true,
+//     legacyHeaders: false,
+//   })
+// );
 
 
 /* -------------------- Body Parsing -------------------- */
