@@ -1,6 +1,43 @@
 const mongoose = require('mongoose');
 
 
+const SubscriptionSchema = new mongoose.Schema(
+  {
+    planType: {
+      type: String,
+      enum: ["basic", "premium", "enterprise"],
+      required: true,
+    },
+    planDuration: {
+      type: String,
+      enum: ["1month", "3months", "6months", "1year"],
+      required: true,
+    },
+    orderId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    paymentId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    paidTill: {
+      type: Date,
+      required: true,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    purchasedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false }
+);
 const BasicInfoSchema = new mongoose.Schema(
   {
     name: String,
@@ -124,7 +161,7 @@ const WebsiteSchema = new mongoose.Schema(
       default: [],
     },
 
-     socialLinks: {
+    socialLinks: {
       type: SocialLinksSchema,
       default: {},
     },
@@ -138,11 +175,24 @@ const WebsiteSchema = new mongoose.Schema(
       type: SectionsSchema,
       default: {},
     },
-    QrCode:{
-      url:String,
-      publicId:String
+    subscription: {
+      type: SubscriptionSchema,
+      default: null,
     },
 
+    subscriptionHistory: {
+      type: [SubscriptionSchema],
+      default: [],
+    },
+    QrCode: {
+      url: String,
+      publicId: String
+    },
+    qrCode: {
+      url: { type: String },
+      image: { type: String }, 
+      generatedAt: { type: Date },
+    },
     paidTill: {
       type: Date,
       default: null,
