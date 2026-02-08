@@ -23,6 +23,8 @@ const {
   getSubscriptionStatus,
   upsertSocialLinks,
   getSocialLinks,
+  checkWebsiteUrlPresentOrNot,
+  changeThemeAndCalculatePrice,
 
 } = require("../controllers/website.controller");
 
@@ -50,6 +52,11 @@ router.delete("/:driverId", deleteWebsite);
 
 router.get('/step/:driverId',getWhichStepIAmOn)
 router.post("/qr-code", genrateQrCodeForWebsite);
+
+
+router.post("/check-webiste-url",checkWebsiteUrlPresentOrNot)
+router.post("/check-webiste-theme/:driverId",changeThemeAndCalculatePrice)
+
 
 router.patch(
   "/:driverId/social-links",

@@ -6,31 +6,54 @@ const SubscriptionSchema = new mongoose.Schema(
     planType: {
       type: String,
       enum: ["basic", "premium", "enterprise"],
+      default: "basic",
+    },
+
+    durationMonths: {
+      type: Number,
       required: true,
     },
-    planDuration: {
-      type: String,
-      enum: ["1month", "3months", "6months", "1year"],
+
+    themeId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "Theme",
       required: true,
     },
+
     orderId: {
       type: String,
       required: true,
       index: true,
     },
+
     paymentId: {
       type: String,
-      required: true,
+      default: "",
       index: true,
     },
-    paidTill: {
-      type: Date,
+
+    amountPay: {
+      type: Number, // rupees
       required: true,
     },
-    isActive: {
-      type: Boolean,
-      default: true,
+
+    amountPayPaise: {
+      type: Number, // paise
+      required: true,
     },
+
+    status: {
+      type: String,
+      enum: ["pending", "paid", "failed"],
+      default: "pending",
+      index: true,
+    },
+
+    paidTill: {
+      type: Date,
+      default: null,
+    },
+
     purchasedAt: {
       type: Date,
       default: Date.now,
@@ -38,11 +61,13 @@ const SubscriptionSchema = new mongoose.Schema(
   },
   { _id: false }
 );
+
 const BasicInfoSchema = new mongoose.Schema(
   {
     name: String,
     phone: String,
     whatsapp: String,
+    logo_name: String,
     logoUrl: String,
     logoPublicId: String,
     city: String,
@@ -92,7 +117,6 @@ const PopularPriceSchema = new mongoose.Schema(
     start: String,
     end: String,
     type: String,
-
     mini: VehiclePriceSchema,
     sedan: VehiclePriceSchema,
     suv: VehiclePriceSchema,
@@ -157,6 +181,7 @@ const WebsiteSchema = new mongoose.Schema(
     },
 
     popularPrices: {
+
       type: [PopularPriceSchema],
       default: [],
     },
@@ -170,6 +195,21 @@ const WebsiteSchema = new mongoose.Schema(
       type: [ReviewSchema],
       default: [],
     },
+    themeHistory: {
+      type: [
+        {
+          oldThemeId: { type: mongoose.Schema.ObjectId, ref: "Theme" },
+          newThemeId: { type: mongoose.Schema.ObjectId, ref: "Theme" },
+          amountPay: String,
+          changedAt: { type: Date, default: Date.now },
+          reason: { type: String, default: "upgrade" },
+          orderId: { type: String, default: "" },
+          paymentId: { type: String, default: "" },
+        },
+      ],
+      default: [],
+    },
+
 
     sections: {
       type: SectionsSchema,
@@ -179,7 +219,9 @@ const WebsiteSchema = new mongoose.Schema(
       type: SubscriptionSchema,
       default: null,
     },
-
+    website_url: {
+      type: String
+    },
     subscriptionHistory: {
       type: [SubscriptionSchema],
       default: [],
@@ -190,7 +232,7 @@ const WebsiteSchema = new mongoose.Schema(
     },
     qrCode: {
       url: { type: String },
-      image: { type: String }, 
+      image: { type: String },
       generatedAt: { type: Date },
     },
     paidTill: {

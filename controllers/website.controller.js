@@ -59,6 +59,7 @@ exports.updateBasicInfo = asyncHandler(async (req, res) => {
         themeId,
         name,
         phone,
+        logo_name,
         whatsapp,
         city,
         serviceArea,
@@ -111,6 +112,7 @@ exports.updateBasicInfo = asyncHandler(async (req, res) => {
 
     website.basicInfo = {
         name: name ?? website.basicInfo.name,
+        logo_name: logo_name ?? website?.basicInfo?.logo_name,
         phone: phone ?? website.basicInfo.phone,
         whatsapp: whatsapp ?? website.basicInfo.whatsapp,
         city: city ?? website.basicInfo.city,
@@ -727,7 +729,6 @@ exports.getWhichStepIAmOn = asyncHandler(async (req, res) => {
 
     const website = await Website.findOne({ driverId });
 
-    /* ===== STEP 1: No website yet ===== */
     if (!website) {
         return res.status(200).json({
             success: true,
@@ -739,6 +740,7 @@ exports.getWhichStepIAmOn = asyncHandler(async (req, res) => {
                 completed: [],
                 progress: 0,
                 hasWebsite: false,
+                popularPricesSkipped: false,
             },
         });
     }
@@ -746,6 +748,9 @@ exports.getWhichStepIAmOn = asyncHandler(async (req, res) => {
     let currentStep = 1;
     let stepName = "Choose Theme";
     const completed = [];
+
+    // ✅ NEW FLAG
+    let popularPricesSkipped = false;
 
     /* ===== STEP 1: Theme ===== */
     completed.push("Theme Selected");
@@ -766,12 +771,16 @@ exports.getWhichStepIAmOn = asyncHandler(async (req, res) => {
         stepName = "Popular Prices";
     }
 
-    /* ===== STEP 3: Popular Prices ===== */
+    /* ===== STEP 3: Popular Prices (OPTIONAL) ===== */
     if (Array.isArray(website.popularPrices) && website.popularPrices.length >= 1) {
         completed.push("Popular Prices");
-        currentStep = 4;
-        stepName = "Packages";
+    } else {
+        popularPricesSkipped = true; // ✅ mark skipped if empty
     }
+
+    // ✅ Always allow next step
+    currentStep = 4;
+    stepName = "Packages";
 
     /* ===== STEP 4: Packages ===== */
     if (Array.isArray(website.packages) && website.packages.length >= 1) {
@@ -819,6 +828,7 @@ exports.getWhichStepIAmOn = asyncHandler(async (req, res) => {
             completed,
             isLive: website.isLive || false,
             hasWebsite: true,
+            popularPricesSkipped, // ✅ added
             progress: Math.round((completed.length / 7) * 100),
         },
     });
@@ -884,143 +894,412 @@ exports.getSocialLinks = asyncHandler(async (req, res) => {
 });
 
 
-
-exports.createPaymentOrder = asyncHandler(async (req, res) => {
-    const { driverId, themeId, durationMonths } = req.body;
-    console.log(req.body)
-
-    if (!driverId || !themeId || !durationMonths) {
-        return res.status(400).json({ success: false, message: "Required fields missing" });
-    }
-
-    const theme = await Theme.findOne({ _id: themeId });
-
-    if (!theme) {
-        return res.status(404).json({ success: false, message: "Theme not found" });
-    }
-
-    const plan = theme.pricePlans.find(p =>
-        p.durationMonths === Number(durationMonths) && p.isActive
-    );
-
-    if (!plan) {
-        return res.status(400).json({ success: false, message: "Invalid plan duration" });
-    }
-
-    const amount = plan.price * 100; // convert to paise
-
-    const order = await instance.orders.create({
-        amount,
-        currency: "INR",
-        receipt: `receipt_${Date.now()}`,
-        notes: { driverId, themeId, durationMonths },
-    });
-
-    res.status(201).json({
-        success: true,
-        data: {
-            orderId: order.id,
-            amount: order.amount,
-            currency: order.currency,
-            key_id: ENV.RAZORPAY_KEY_ID,
-        },
-    });
-});
-
-exports.verifyPayment = asyncHandler(async (req, res) => {
-    console.log(req.body);
-
-    const { driverId, orderId, paymentId, signature, durationMonths } = req.body;
-
-    if (!driverId || !orderId || !paymentId || !signature || !durationMonths) {
-        return res.status(400).json({
-            success: false,
-            message: "Required payment fields missing",
-        });
-    }
-
+exports.checkWebsiteUrlPresentOrNot = async (req, res) => {
     try {
-        /* ===== Verify Razorpay Signature ===== */
-        const generatedSignature = crypto
-            .createHmac("sha256", ENV.RAZORPAY_KEY_SECRET)
-            .update(`${orderId}|${paymentId}`)
-            .digest("hex");
+        let { slug } = req.body;
+        console.log(slug)
+        slug = (slug || "").toString().trim().toLowerCase();
 
-        if (generatedSignature !== signature) {
+        if (!slug) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid payment signature",
+                message: "Please enter a website URL name.",
             });
         }
 
-        /* ===== Find Website ===== */
-        const website = await Website.findOne({ driverId });
-        if (!website) {
-            return res.status(404).json({
-                success: false,
-                message: "Website not found",
-            });
-        }
-
-        /* ===== Calculate Paid Till ===== */
-        const paidTill = new Date();
-        paidTill.setMonth(paidTill.getMonth() + Number(durationMonths));
-
-        /* ===== Map Duration ===== */
-        const durationMap = {
-            1: "1month",
-            3: "3months",
-            6: "6months",
-            12: "1year",
-        };
-
-        const planDuration = durationMap[Number(durationMonths)];
-
-        if (!planDuration) {
+        // allow only a-z, 0-9, -
+        const slugRegex = /^[a-z0-9-]{3,50}$/;
+        if (!slugRegex.test(slug)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid plan duration",
+                message:
+                    "Only letters, numbers, and hyphen (-) are allowed. Example: vicky-cabs",
             });
         }
 
-        /* ===== Decide Plan Type ===== */
-        // Simple logic: based on theme OR fixed for now
-        const planType = "premium"; // or derive from theme later
+        // Check if already exists
+        const websiteFound = await Website.findOne({ website_url: slug }).lean();
 
-        /* ===== Save Subscription ===== */
-        website.subscription = {
-            planType,
-            planDuration,
-            orderId,
-            paymentId,
-            paidTill,
-            isActive: true,
-            purchasedAt: new Date(),
-        };
+        // If available
+        if (!websiteFound) {
+            return res.json({
+                success: true,
+                available: true,
+                message: "Great! This website URL is available 🎉",
+                slug,
+            });
+        }
 
-        website.paidTill = paidTill;
-        website.isLive = true; // optional: auto-publish after payment
+        // If not available → generate suggestions
+        const suggestions = [];
+        const candidates = [
+            `${slug}1`,
+            `${slug}24`,
+            `${slug}cab`,
+            `${slug}cabs`,
+            `${slug}taxi`,
+            `${slug}-official`,
+            `${slug}-india`,
+            `${slug}-online`,
+        ];
 
-        await website.save();
+        for (let candidate of candidates) {
+            if (suggestions.length >= 3) break;
+            const exists = await Website.findOne({ website_url: candidate, isLive: true }).lean();
+            if (!exists) suggestions.push(candidate);
+        }
 
-        return res.status(200).json({
+        return res.json({
             success: true,
-            message: "Payment verified successfully",
-            data: {
-                driverId: website.driverId,
-                subscription: website.subscription,
-                paidTill: website.paidTill,
-            },
+            available: false,
+            message: "Oops! This website URL is already taken 😕",
+            slug,
+            suggestions,
         });
     } catch (error) {
-        console.error("Payment Verification Error:", error);
+        console.error("checkWebsiteUrlPresentOrNot error:", error);
         return res.status(500).json({
             success: false,
-            message: "Payment verification failed",
-            error: error.message,
+            message: "Server error. Please try again.",
         });
     }
+};
+
+exports.createPaymentOrder = asyncHandler(async (req, res) => {
+  const { driverId, themeId, durationMonths, slug, websiteId, upgrade, amountInPaise } = req.body;
+console.log(req.body)
+  if (!driverId || !themeId || !durationMonths) {
+    return res.status(400).json({ success: false, message: "Required fields missing" });
+  }
+
+  const theme = await Theme.findById(themeId);
+  if (!theme) {
+    return res.status(404).json({ success: false, message: "Theme not found" });
+  }
+console.log(theme)
+  const plan = theme.pricePlans.find(
+    (p) => p.durationMonths === Number(durationMonths) && p.isActive
+  );
+
+  console.log(plan)
+  if (!plan) {
+    return res.status(400).json({ success: false, message: "Invalid plan duration" });
+  }
+
+  const amount = upgrade ? Number(amountInPaise) : Number(plan.price) * 100; // paise
+  const amountRupees = amount / 100;
+
+  console.log("Amount",amount)
+  const order = await instance.orders.create({
+    amount,
+    currency: "INR",
+    receipt: `receipt_${Date.now()}`,
+    notes: { driverId, themeId, durationMonths, websiteId, slug, upgrade: !!upgrade },
+  });
+
+  // ✅ Save slug on order create
+  const website = await Website.findById(websiteId);
+  if (!website) {
+    return res.status(404).json({ success: false, message: "Website not found" });
+  }
+
+  if (!upgrade) {
+    website.website_url = slug;
+  }
+
+  // ✅ Save pending subscription
+  website.subscription = {
+    planType: theme.planType || "basic",
+    durationMonths: Number(durationMonths),
+    themeId,
+    orderId: order.id,
+    paymentId: "",
+    amountPay: amountRupees,
+    amountPayPaise: amount,
+    status: "pending",
+    paidTill: null,
+    purchasedAt: new Date(),
+  };
+
+  // Optional: history me bhi daal do
+  website.subscriptionHistory.push(website.subscription);
+
+  await website.save();
+
+  res.status(201).json({
+    success: true,
+    data: {
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      key_id: ENV.RAZORPAY_KEY_ID,
+    },
+  });
 });
+exports.verifyPayment = asyncHandler(async (req, res) => {
+  const {
+    driverId,
+    orderId,
+    paymentId,
+    signature,
+    durationMonths,
+    theme,
+    upgrade,
+  } = req.body;
+
+  console.log("========================================");
+  console.log("✅ VERIFY PAYMENT API HIT");
+  console.log("📌 Body:", req.body);
+  console.log("========================================");
+
+  if (!driverId || !orderId || !paymentId || !signature || !durationMonths) {
+    console.log("❌ Missing required fields");
+    return res.status(400).json({
+      success: false,
+      message: "Required payment fields missing",
+    });
+  }
+
+  try {
+    /* =========================================================
+       1) VERIFY SIGNATURE
+    ========================================================= */
+    const generatedSignature = crypto
+      .createHmac("sha256", ENV.RAZORPAY_KEY_SECRET)
+      .update(`${orderId}|${paymentId}`)
+      .digest("hex");
+
+    console.log("🔐 Generated Signature:", generatedSignature);
+    console.log("🔐 Received Signature :", signature);
+
+    if (generatedSignature !== signature) {
+      console.log("❌ Signature mismatch");
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment signature",
+      });
+    }
+
+    console.log("✅ Signature Verified Successfully");
+
+    /* =========================================================
+       2) FIND WEBSITE
+    ========================================================= */
+    const website = await Website.findOne({ driverId });
+
+    if (!website) {
+      console.log("❌ Website not found for driverId:", driverId);
+      return res.status(404).json({
+        success: false,
+        message: "Website not found",
+      });
+    }
+
+    console.log("✅ Website Found:", {
+      driverId: website.driverId,
+      websiteId: website._id,
+      themeId: website.themeId,
+      isLive: website.isLive,
+      paidTill: website.paidTill,
+    });
+
+    /* =========================================================
+       3) CLEAN OLD INVALID HISTORY (IMPORTANT FIX)
+       - Purane records me required fields missing the
+    ========================================================= */
+    website.subscriptionHistory = (website.subscriptionHistory || []).filter(
+      (s) => s && s.orderId && s.themeId
+    );
+
+    /* =========================================================
+       4) DUPLICATE CHECK (CORRECT)
+       - same paymentId => duplicate
+       - same orderId => duplicate ONLY if status paid
+    ========================================================= */
+    const alreadyExists = (website.subscriptionHistory || []).some((s) => {
+      if (s.paymentId && s.paymentId === paymentId) return true;
+      if (s.orderId === orderId && s.status === "paid") return true;
+      return false;
+    });
+
+    console.log("🔁 Duplicate Check:", alreadyExists);
+
+    if (alreadyExists) {
+      console.log("⚠️ Payment already verified, returning existing data.");
+      return res.status(200).json({
+        success: true,
+        message: "Payment already verified",
+        data: {
+          driverId: website.driverId,
+          subscription: website.subscription,
+          paidTill: website.paidTill,
+          themeId: website.themeId,
+        },
+      });
+    }
+
+    /* =========================================================
+       5) CHECK CURRENT PENDING SUBSCRIPTION
+    ========================================================= */
+    console.log("📌 Current subscription on website:", website.subscription);
+
+    if (!website.subscription) {
+      console.log("❌ No subscription found on website");
+      return res.status(400).json({
+        success: false,
+        message: "No subscription found",
+      });
+    }
+
+    if (website.subscription.orderId !== orderId) {
+      console.log("❌ OrderId mismatch");
+      console.log("🧾 Website OrderId:", website.subscription.orderId);
+      console.log("🧾 Request OrderId:", orderId);
+
+      return res.status(400).json({
+        success: false,
+        message: "OrderId does not match current pending subscription",
+      });
+    }
+
+    console.log("✅ OrderId matched with pending subscription");
+
+    /* =========================================================
+       6) PAID TILL EXTEND LOGIC
+    ========================================================= */
+    const now = new Date();
+
+    const baseDate =
+      website.paidTill && new Date(website.paidTill) > now
+        ? new Date(website.paidTill)
+        : now;
+
+    const paidTill = new Date(baseDate);
+    paidTill.setMonth(paidTill.getMonth() + Number(durationMonths));
+
+    console.log("📅 PaidTill Calculation:");
+    console.log("⏳ Now:", now);
+    console.log("⏳ BaseDate:", baseDate);
+    console.log("⏳ DurationMonths:", durationMonths);
+    console.log("✅ New PaidTill:", paidTill);
+
+    /* =========================================================
+       7) UPDATE SUBSCRIPTION (PAID)
+    ========================================================= */
+    const oldSubscription = website.subscription;
+
+    const updatedSubscription = {
+      planType: oldSubscription.planType || "basic",
+      durationMonths: Number(durationMonths),
+      themeId: oldSubscription.themeId || website.themeId,
+
+      orderId,
+      paymentId,
+
+      amountPay: Number(oldSubscription.amountPay || 0),
+      amountPayPaise: Number(oldSubscription.amountPayPaise || 0),
+
+      status: "paid",
+      paidTill,
+
+      isActive: true,
+      purchasedAt: oldSubscription.purchasedAt || now,
+    };
+
+    console.log("🧾 Updated Subscription:", updatedSubscription);
+
+    /* =========================================================
+       8) MARK OLD HISTORY INACTIVE
+    ========================================================= */
+    website.subscriptionHistory = (website.subscriptionHistory || []).map((s) => ({
+      ...s,
+      isActive: false,
+    }));
+
+    /* =========================================================
+       9) SAVE NEW SUBSCRIPTION
+    ========================================================= */
+    website.subscription = updatedSubscription;
+    website.subscriptionHistory.push(updatedSubscription);
+
+    website.paidTill = paidTill;
+    website.isLive = true;
+
+    console.log("✅ Subscription saved + website marked live");
+
+    /* =========================================================
+       10) THEME UPGRADE (OPTIONAL)
+    ========================================================= */
+    const isUpgrade = upgrade === true || upgrade === "true";
+    console.log("🎨 Upgrade Flag:", isUpgrade);
+
+    if (isUpgrade) {
+      const newThemeId = theme?._id || theme?.themeId || null;
+
+      console.log("🎨 New ThemeId:", newThemeId);
+
+      if (!newThemeId || !mongoose.isValidObjectId(newThemeId)) {
+        console.log("❌ Invalid themeId for upgrade");
+        return res.status(400).json({
+          success: false,
+          message: "Theme is required for upgrade",
+        });
+      }
+
+      const oldThemeId = website.themeId;
+
+      if (String(oldThemeId) !== String(newThemeId)) {
+        website.themeHistory = website.themeHistory || [];
+        website.themeHistory.push({
+          oldThemeId,
+          newThemeId,
+          amountPay: String(updatedSubscription.amountPay || ""),
+          changedAt: new Date(),
+          reason: "upgrade",
+          orderId,
+          paymentId,
+        });
+
+        website.themeId = newThemeId;
+        console.log("✅ Theme upgraded & history saved");
+      } else {
+        console.log("⚠️ Same theme selected, no theme change required");
+      }
+    }
+
+    /* =========================================================
+       11) FINAL SAVE
+    ========================================================= */
+    await website.save();
+
+    console.log("✅ Website saved successfully in DB");
+    console.log("========================================");
+
+    return res.status(200).json({
+      success: true,
+      message: isUpgrade
+        ? "Payment verified & theme upgraded successfully 🎉"
+        : "Payment verified successfully 🎉",
+      data: {
+        driverId: website.driverId,
+        subscription: website.subscription,
+        paidTill: website.paidTill,
+        themeId: website.themeId,
+        upgrade: isUpgrade,
+      },
+    });
+  } catch (error) {
+    console.log("🔥 ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Payment verification failed",
+      error: error.message,
+    });
+  }
+});
+
+
+
 
 exports.getSubscriptionStatus = asyncHandler(async (req, res) => {
     const { driverId } = req.params;
@@ -1054,6 +1333,283 @@ exports.getSubscriptionStatus = asyncHandler(async (req, res) => {
             daysRemaining: isSubscriptionActive
                 ? Math.ceil((website.paidTill - now) / (1000 * 60 * 60 * 24))
                 : 0,
+        },
+    });
+});
+
+const calculateProratedRefund = (oldPrice, oldDurationMonths, paidTill) => {
+  if (!paidTill) return 0;
+
+  const now = new Date();
+  const paidTillDate = new Date(paidTill);
+
+  const remainingMs = paidTillDate.getTime() - now.getTime();
+  if (remainingMs <= 0) return 0;
+
+  const totalMsInPlan = Number(oldDurationMonths) * 30 * 24 * 60 * 60 * 1000;
+  if (!totalMsInPlan || totalMsInPlan <= 0) return 0;
+
+  const remainingRatio = Math.min(remainingMs / totalMsInPlan, 1);
+  return Math.round(Number(oldPrice) * remainingRatio);
+};
+
+const getLatestSubscription = (website) => {
+  if (website.subscription && website.subscription.orderId) {
+    return website.subscription;
+  }
+
+  const paidSubs = (website.subscriptionHistory || []).filter(
+    (s) => s && s.status === "paid"
+  );
+
+  if (!paidSubs.length) return null;
+
+  paidSubs.sort((a, b) => new Date(b.purchasedAt) - new Date(a.purchasedAt));
+  return paidSubs[0];
+};
+
+/* ==========================================
+   CHANGE THEME + CALCULATE PAYABLE AMOUNT
+   ========================================== */
+exports.changeThemeAndCalculatePrice = asyncHandler(async (req, res) => {
+  const { driverId } = req.params;
+
+  const {
+    newThemeId,
+    plan, // { durationMonths, price }
+    upgrade = true,
+  } = req.body;
+
+  console.log("🟢 Request body:", req.body);
+
+  /* ================= VALIDATIONS ================= */
+  if (!driverId || !mongoose.isValidObjectId(driverId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid or missing driverId",
+    });
+  }
+
+  if (!newThemeId || !mongoose.isValidObjectId(newThemeId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid or missing newThemeId",
+    });
+  }
+
+  if (!plan || typeof plan !== "object") {
+    return res.status(400).json({
+      success: false,
+      message: "Selected plan is required",
+    });
+  }
+
+  if (!plan.durationMonths || !plan.price) {
+    return res.status(400).json({
+      success: false,
+      message: "Plan must include durationMonths and price",
+    });
+  }
+
+  const durationMonths = Number(plan.durationMonths);
+  const newPrice = Number(plan.price);
+
+  if (!durationMonths || durationMonths < 1) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid durationMonths in plan",
+    });
+  }
+
+  if (!newPrice || newPrice < 1) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid price in plan",
+    });
+  }
+
+  /* ================= FIND WEBSITE ================= */
+  const website = await Website.findOne({ driverId });
+  if (!website) {
+    return res.status(404).json({
+      success: false,
+      message: "Website not found",
+    });
+  }
+
+  /* ================= CURRENT THEME ================= */
+  const oldTheme = await Theme.findById(website.themeId);
+  if (!oldTheme) {
+    return res.status(404).json({
+      success: false,
+      message: "Current theme not found",
+    });
+  }
+
+  /* ================= NEW THEME ================= */
+  const newTheme = await Theme.findById(newThemeId);
+  if (!newTheme) {
+    return res.status(404).json({
+      success: false,
+      message: "New theme not found",
+    });
+  }
+
+  /* ================= LATEST SUBSCRIPTION ================= */
+  const latestSub = getLatestSubscription(website);
+
+  const oldDurationMonths = Number(latestSub?.durationMonths || 0);
+  const oldPaidTill = latestSub?.paidTill || website.paidTill || null;
+
+  console.log("📌 Latest Subscription Used:", latestSub);
+
+  /* ================= OLD PLAN PRICE (FROM OLD THEME) ================= */
+  let oldPlan = null;
+
+  if (oldDurationMonths) {
+    oldPlan = oldTheme.pricePlans?.find(
+      (p) => p.isActive && Number(p.durationMonths) === Number(oldDurationMonths)
+    );
+  }
+
+  if (!oldPlan) oldPlan = oldTheme.pricePlans?.find((p) => p.isActive);
+  if (!oldPlan) oldPlan = oldTheme.pricePlans?.[0];
+
+  const oldPrice = Number(oldPlan?.price || latestSub?.amountPay || 0);
+
+  /* ================= PRORATED REFUND ================= */
+  let proratedRefund = 0;
+
+  const hasActivePaid = oldPaidTill && new Date(oldPaidTill) > new Date();
+
+  if (upgrade === true && hasActivePaid && oldPrice > 0 && oldDurationMonths > 0) {
+    proratedRefund = calculateProratedRefund(
+      oldPrice,
+      oldDurationMonths,
+      oldPaidTill
+    );
+  }
+
+  /* ================= FINAL AMOUNT ================= */
+  let amountToPay = newPrice - proratedRefund;
+  amountToPay = Math.max(0, amountToPay);
+
+  const MIN_UPGRADE_FEE = 49;
+
+  if (upgrade === true && amountToPay === 0) {
+    amountToPay = MIN_UPGRADE_FEE;
+  }
+
+  /* ================= MESSAGE ================= */
+  let message = "";
+
+  if (upgrade === true) {
+    if (amountToPay === MIN_UPGRADE_FEE) {
+      message =
+        `Upgrade charge: ₹${MIN_UPGRADE_FEE}\n` +
+        `Aapka remaining subscription amount adjust ho gaya hai.\n` +
+        `Bas ₹${MIN_UPGRADE_FEE} pay karke upgrade complete kar sakte hain!`;
+    } else {
+      message =
+        `Upgrade ka total kharcha: ₹${amountToPay}\n` +
+        `Aapke bache hue ₹${proratedRefund} rupaye adjust kar diye gaye hain.\n\n` +
+        `Bas ₹${amountToPay} pay karke upgrade complete kar sakte hain!`;
+    }
+  } else {
+    message =
+      `Plan purchase amount: ₹${amountToPay}\n` +
+      `Proceed to payment to activate your website.`;
+  }
+
+  /* ================= RESPONSE ================= */
+  return res.status(200).json({
+    success: true,
+    data: {
+      driverId,
+
+      // Current
+      currentThemeId: website.themeId,
+      currentThemeName: oldTheme.name,
+      currentPlanPrice: oldPrice,
+      currentPaidTill: oldPaidTill,
+
+      // New
+      newThemeId,
+      newThemeName: newTheme.name,
+      selectedPlan: {
+        durationMonths,
+        price: newPrice,
+      },
+
+      // Upgrade calculation
+      upgrade: upgrade === true,
+      proratedRefund,
+      amountToPay,
+      amountInPaise: Math.round(amountToPay * 100),
+      currency: "INR",
+      message,
+    },
+  });
+});
+
+
+exports.applyNewTheme = asyncHandler(async (req, res) => {
+    const { driverId } = req.params;
+    const { newThemeId, paymentId, orderId, signature, durationMonths } = req.body;
+
+    if (!driverId || !newThemeId) {
+        return res.status(400).json({
+            success: false,
+            message: "driverId and newThemeId required",
+        });
+    }
+
+    const website = await Website.findOne({ driverId });
+    if (!website) {
+        return res.status(404).json({ success: false, message: "Website not found" });
+    }
+
+    const newTheme = await Theme.findById(newThemeId);
+    if (!newTheme) {
+        return res.status(404).json({ success: false, message: "New theme not found" });
+    }
+
+    // If payment was required → verify
+    let amountPaid = 0;
+    if (paymentId && orderId && signature) {
+        // Verify Razorpay signature
+        const generatedSignature = crypto
+            .createHmac("sha256", ENV.RAZORPAY_KEY_SECRET)
+            .update(`${orderId}|${paymentId}`)
+            .digest("hex");
+
+        if (generatedSignature !== signature) {
+            return res.status(400).json({ success: false, message: "Invalid signature" });
+        }
+
+        amountPaid = req.body.amountPaid || 0; // you should pass this from frontend
+    }
+
+    // Update theme
+    website.themeId = newThemeId;
+
+    // Extend / refresh subscription
+    const paidTill = new Date();
+    paidTill.setMonth(paidTill.getMonth() + (durationMonths || 1));
+
+    website.paidTill = paidTill;
+    website.isLive = true;
+
+    await website.save();
+
+    res.status(200).json({
+        success: true,
+        message: "Theme changed and subscription updated successfully",
+        data: {
+            newThemeId,
+            newThemeName: newTheme.name,
+            paidTill,
+            isLive: true,
         },
     });
 });

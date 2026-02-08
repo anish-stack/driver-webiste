@@ -42,7 +42,9 @@ const ThemeSchema = new mongoose.Schema(
       type: [PricePlanSchema],
       default: [],
     },
-
+    demo_url:{
+      type:String,
+    },
     isActive: {
       type: Boolean,
       default: true,
