@@ -611,6 +611,32 @@ exports.getWebsite = asyncHandler(async (req, res) => {
     });
 });
 
+
+exports.getWebsiteBySlug = asyncHandler(async (req, res) => {
+    const { slug } = req.params;
+
+    if (!slug) {
+        return res.status(400).json({
+            success: false,
+            message: "Slug is required",
+        });
+    }
+
+    const website = await Website.findOne({ website_url:slug }).populate("themeId");
+
+    if (!website) {
+        return res.status(404).json({
+            success: false,
+            message: "Website not found",
+        });
+    }
+
+    res.status(200).json({
+        success: true,
+        data: website,
+    });
+});
+
 exports.deleteWebsite = asyncHandler(async (req, res) => {
     const { driverId } = req.params;
 

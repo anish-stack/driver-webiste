@@ -25,10 +25,13 @@ const {
   getSocialLinks,
   checkWebsiteUrlPresentOrNot,
   changeThemeAndCalculatePrice,
+  getWebsiteBySlug,
 
 } = require("../controllers/website.controller");
 
 router.get("/:driverId", getWebsite);
+router.get("/detail/:slug",getWebsiteBySlug);
+
 
 router.patch("/:driverId/basic-info", uploadBuffer.single("logo"), updateBasicInfo);
 
