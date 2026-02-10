@@ -689,7 +689,7 @@ exports.genrateQrCodeForWebsite = async (req, res) => {
             });
         }
 
-        const url = `https://taxisafar.com/${driverId}/${themeId}`;
+        const url = `https://taxisafar.com/${website?.website_url}`;
 
         /* ===== Generate QR (buffer) ===== */
         const qrBuffer = await QRCode.toBuffer(url, {
