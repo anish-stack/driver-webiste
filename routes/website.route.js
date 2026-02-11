@@ -29,6 +29,20 @@ const {
 
 } = require("../controllers/website.controller");
 
+
+
+const {
+  getAllWebsites,
+  getWebsiteById,
+  getWebsitesByTheme,
+  toggleWebsiteLiveStatus,
+  deleteWebsiteByAdmin,
+  getSubscriptionOverview,
+  getExpiringSubscriptions,
+  adminExtendSubscription,
+  getThemeUsageStats,
+} = require('../controllers/website.admin.controller');
+
 router.get("/:driverId", getWebsite);
 router.get("/detail/:slug",getWebsiteBySlug);
 
@@ -75,6 +89,23 @@ router.get(
 router.post("/payment/create-order", createPaymentOrder);
 router.post("/payment/verify", verifyPayment);
 router.get("/subscription/:driverId", getSubscriptionStatus);
+
+
+
+
+
+router.get("/admin/websites", getAllWebsites);
+router.get("/admin/websites/:id", getWebsiteById);
+router.get("/admin/websites/theme/:themeId", getWebsitesByTheme);
+router.patch("/admin/websites/:id/toggle-live", toggleWebsiteLiveStatus);
+router.delete("/admin/websites/:id", deleteWebsiteByAdmin);
+router.get("/subscriptions/overview", getSubscriptionOverview);
+router.get("/subscriptions/expiring", getExpiringSubscriptions);
+router.post("/subscriptions/extend", adminExtendSubscription);
+router.get("/themes/usage-stats", getThemeUsageStats);
+
+
+
 
 
 module.exports = router;

@@ -47,15 +47,12 @@ const getOrCreateWebsite = async (driverId, themeId = null) => {
     return website;
 };
 
-const validateDriverOwnership = (website, requestDriverId) => {
-    if (website.driverId !== requestDriverId) {
-        throw new Error("Unauthorized: You can only update your own website");
-    }
-};
+
 
 exports.updateBasicInfo = asyncHandler(async (req, res) => {
     const { driverId } = req.params;
-    const {
+
+    let {
         themeId,
         name,
         phone,
@@ -64,9 +61,11 @@ exports.updateBasicInfo = asyncHandler(async (req, res) => {
         city,
         serviceArea,
         officeHours,
-        logoUrl: bodyLogoUrl, // 👈 direct link from body
+        logoUrl,
     } = req.body;
 
+    console.log("📥 BODY:", req.body);
+    console.log("📦 FILE:", req.file ? "YES" : "NO");
 
     if (!driverId) {
         return res.status(400).json({
@@ -75,17 +74,28 @@ exports.updateBasicInfo = asyncHandler(async (req, res) => {
         });
     }
 
-    const website = await getOrCreateWebsite(driverId, themeId);
+    // ✅ clean themeId
+    const cleanThemeId =
+        themeId && String(themeId).trim() !== "" ? String(themeId).trim() : null;
 
-    let logoUrl = website.basicInfo.logoUrl;
-    let logoPublicId = website.basicInfo.logoPublicId;
+    // ✅ clean logoUrl
+    const cleanLogoUrl =
+        logoUrl && String(logoUrl).trim() !== "" ? String(logoUrl).trim() : null;
+
+    const website = await getOrCreateWebsite(driverId, cleanThemeId);
+
+    let finalLogoUrl = website.basicInfo?.logoUrl || null;
+    let finalLogoPublicId = website.basicInfo?.logoPublicId || null;
 
     /* ================= LOGO UPDATE ================= */
 
     // ✅ Case 1: File upload
     if (req.file) {
-        if (logoPublicId) {
-            await deleteFile(logoPublicId);
+        console.log("🟦 LOGO UPDATE: Uploading new file...");
+
+        if (finalLogoPublicId) {
+            console.log("🗑 Deleting old cloudinary file:", finalLogoPublicId);
+            await deleteFile(finalLogoPublicId);
         }
 
         const uploadResult = await uploadBuffer(
@@ -93,38 +103,48 @@ exports.updateBasicInfo = asyncHandler(async (req, res) => {
             `websites/${driverId}/logo`
         );
 
-        logoUrl = uploadResult.secure_url;
-        logoPublicId = uploadResult.public_id;
+        finalLogoUrl = uploadResult.secure_url;
+        finalLogoPublicId = uploadResult.public_id;
+
+        console.log("🟩 LOGO UPDATED VIA FILE:", finalLogoUrl);
     }
 
-    // ✅ Case 2: Direct logo URL (no file)
-    else if (bodyLogoUrl) {
-        // agar pehle cloudinary logo tha to delete
-        if (logoPublicId) {
-            await deleteFile(logoPublicId);
+    // ✅ Case 2: Direct logo URL
+    else if (cleanLogoUrl) {
+        console.log("🟦 LOGO UPDATE: Saving direct URL:", cleanLogoUrl);
+
+        if (finalLogoPublicId) {
+            console.log("🗑 Deleting old cloudinary file:", finalLogoPublicId);
+            await deleteFile(finalLogoPublicId);
         }
 
-        logoUrl = bodyLogoUrl;
-        logoPublicId = null; // 👈 direct link, no public id
+        finalLogoUrl = cleanLogoUrl;
+        finalLogoPublicId = null;
+
+        console.log("🟩 LOGO UPDATED VIA URL:", finalLogoUrl);
+    } else {
+        console.log("🟨 LOGO UPDATE: No new logo provided");
     }
 
     /* ================= BASIC INFO UPDATE ================= */
 
     website.basicInfo = {
-        name: name ?? website.basicInfo.name,
-        logo_name: logo_name ?? website?.basicInfo?.logo_name,
-        phone: phone ?? website.basicInfo.phone,
-        whatsapp: whatsapp ?? website.basicInfo.whatsapp,
-        city: city ?? website.basicInfo.city,
-        serviceArea: serviceArea ?? website.basicInfo.serviceArea,
-        officeHours: officeHours ?? website.basicInfo.officeHours,
-        logoUrl,
-        logoPublicId,
+        name: name ?? website.basicInfo?.name,
+        logo_name: logo_name ?? website.basicInfo?.logo_name,
+        phone: phone ?? website.basicInfo?.phone,
+        whatsapp: whatsapp ?? website.basicInfo?.whatsapp,
+        city: city ?? website.basicInfo?.city,
+        serviceArea: serviceArea ?? website.basicInfo?.serviceArea,
+        officeHours: officeHours ?? website.basicInfo?.officeHours,
+        logoUrl: finalLogoUrl,
+        logoPublicId: finalLogoPublicId,
     };
 
     await website.save();
 
-    res.status(200).json({
+    console.log("✅ FINAL BASIC INFO SAVED:", website.basicInfo);
+
+    return res.status(200).json({
         success: true,
         message: "Basic info updated successfully",
         data: {
@@ -134,6 +154,7 @@ exports.updateBasicInfo = asyncHandler(async (req, res) => {
         },
     });
 });
+
 
 
 exports.updatePopularPrices = asyncHandler(async (req, res) => {
@@ -622,7 +643,7 @@ exports.getWebsiteBySlug = asyncHandler(async (req, res) => {
         });
     }
 
-    const website = await Website.findOne({ website_url:slug }).populate("themeId");
+    const website = await Website.findOne({ website_url: slug }).populate("themeId");
 
     if (!website) {
         return res.status(404).json({
@@ -992,336 +1013,336 @@ exports.checkWebsiteUrlPresentOrNot = async (req, res) => {
 };
 
 exports.createPaymentOrder = asyncHandler(async (req, res) => {
-  const { driverId, themeId, durationMonths, slug, websiteId, upgrade, amountInPaise } = req.body;
-console.log(req.body)
-  if (!driverId || !themeId || !durationMonths) {
-    return res.status(400).json({ success: false, message: "Required fields missing" });
-  }
-
-  const theme = await Theme.findById(themeId);
-  if (!theme) {
-    return res.status(404).json({ success: false, message: "Theme not found" });
-  }
-console.log(theme)
-  const plan = theme.pricePlans.find(
-    (p) => p.durationMonths === Number(durationMonths) && p.isActive
-  );
-
-  console.log(plan)
-  if (!plan) {
-    return res.status(400).json({ success: false, message: "Invalid plan duration" });
-  }
-
-  const amount = upgrade ? Number(amountInPaise) : Number(plan.price) * 100; // paise
-  const amountRupees = amount / 100;
-
-  console.log("Amount",amount)
-  const order = await instance.orders.create({
-    amount,
-    currency: "INR",
-    receipt: `receipt_${Date.now()}`,
-    notes: { driverId, themeId, durationMonths, websiteId, slug, upgrade: !!upgrade },
-  });
-
-  // ✅ Save slug on order create
-  const website = await Website.findById(websiteId);
-  if (!website) {
-    return res.status(404).json({ success: false, message: "Website not found" });
-  }
-
-  if (!upgrade) {
-    website.website_url = slug;
-  }
-
-  // ✅ Save pending subscription
-  website.subscription = {
-    planType: theme.planType || "basic",
-    durationMonths: Number(durationMonths),
-    themeId,
-    orderId: order.id,
-    paymentId: "",
-    amountPay: amountRupees,
-    amountPayPaise: amount,
-    status: "pending",
-    paidTill: null,
-    purchasedAt: new Date(),
-  };
-
-  // Optional: history me bhi daal do
-  website.subscriptionHistory.push(website.subscription);
-
-  await website.save();
-
-  res.status(201).json({
-    success: true,
-    data: {
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      key_id: ENV.RAZORPAY_KEY_ID,
-    },
-  });
-});
-exports.verifyPayment = asyncHandler(async (req, res) => {
-  const {
-    driverId,
-    orderId,
-    paymentId,
-    signature,
-    durationMonths,
-    theme,
-    upgrade,
-  } = req.body;
-
-  console.log("========================================");
-  console.log("✅ VERIFY PAYMENT API HIT");
-  console.log("📌 Body:", req.body);
-  console.log("========================================");
-
-  if (!driverId || !orderId || !paymentId || !signature || !durationMonths) {
-    console.log("❌ Missing required fields");
-    return res.status(400).json({
-      success: false,
-      message: "Required payment fields missing",
-    });
-  }
-
-  try {
-    /* =========================================================
-       1) VERIFY SIGNATURE
-    ========================================================= */
-    const generatedSignature = crypto
-      .createHmac("sha256", ENV.RAZORPAY_KEY_SECRET)
-      .update(`${orderId}|${paymentId}`)
-      .digest("hex");
-
-    console.log("🔐 Generated Signature:", generatedSignature);
-    console.log("🔐 Received Signature :", signature);
-
-    if (generatedSignature !== signature) {
-      console.log("❌ Signature mismatch");
-      return res.status(400).json({
-        success: false,
-        message: "Invalid payment signature",
-      });
+    const { driverId, themeId, durationMonths, slug, websiteId, upgrade, amountInPaise } = req.body;
+    console.log(req.body)
+    if (!driverId || !themeId || !durationMonths) {
+        return res.status(400).json({ success: false, message: "Required fields missing" });
     }
 
-    console.log("✅ Signature Verified Successfully");
-
-    /* =========================================================
-       2) FIND WEBSITE
-    ========================================================= */
-    const website = await Website.findOne({ driverId });
-
-    if (!website) {
-      console.log("❌ Website not found for driverId:", driverId);
-      return res.status(404).json({
-        success: false,
-        message: "Website not found",
-      });
+    const theme = await Theme.findById(themeId);
+    if (!theme) {
+        return res.status(404).json({ success: false, message: "Theme not found" });
     }
-
-    console.log("✅ Website Found:", {
-      driverId: website.driverId,
-      websiteId: website._id,
-      themeId: website.themeId,
-      isLive: website.isLive,
-      paidTill: website.paidTill,
-    });
-
-    /* =========================================================
-       3) CLEAN OLD INVALID HISTORY (IMPORTANT FIX)
-       - Purane records me required fields missing the
-    ========================================================= */
-    website.subscriptionHistory = (website.subscriptionHistory || []).filter(
-      (s) => s && s.orderId && s.themeId
+    console.log(theme)
+    const plan = theme.pricePlans.find(
+        (p) => p.durationMonths === Number(durationMonths) && p.isActive
     );
 
-    /* =========================================================
-       4) DUPLICATE CHECK (CORRECT)
-       - same paymentId => duplicate
-       - same orderId => duplicate ONLY if status paid
-    ========================================================= */
-    const alreadyExists = (website.subscriptionHistory || []).some((s) => {
-      if (s.paymentId && s.paymentId === paymentId) return true;
-      if (s.orderId === orderId && s.status === "paid") return true;
-      return false;
+    console.log(plan)
+    if (!plan) {
+        return res.status(400).json({ success: false, message: "Invalid plan duration" });
+    }
+
+    const amount = upgrade ? Number(amountInPaise) : Number(plan.price) * 100; // paise
+    const amountRupees = amount / 100;
+
+    console.log("Amount", amount)
+    const order = await instance.orders.create({
+        amount,
+        currency: "INR",
+        receipt: `receipt_${Date.now()}`,
+        notes: { driverId, themeId, durationMonths, websiteId, slug, upgrade: !!upgrade },
     });
 
-    console.log("🔁 Duplicate Check:", alreadyExists);
-
-    if (alreadyExists) {
-      console.log("⚠️ Payment already verified, returning existing data.");
-      return res.status(200).json({
-        success: true,
-        message: "Payment already verified",
-        data: {
-          driverId: website.driverId,
-          subscription: website.subscription,
-          paidTill: website.paidTill,
-          themeId: website.themeId,
-        },
-      });
+    // ✅ Save slug on order create
+    const website = await Website.findById(websiteId);
+    if (!website) {
+        return res.status(404).json({ success: false, message: "Website not found" });
     }
 
-    /* =========================================================
-       5) CHECK CURRENT PENDING SUBSCRIPTION
-    ========================================================= */
-    console.log("📌 Current subscription on website:", website.subscription);
-
-    if (!website.subscription) {
-      console.log("❌ No subscription found on website");
-      return res.status(400).json({
-        success: false,
-        message: "No subscription found",
-      });
+    if (!upgrade) {
+        website.website_url = slug;
     }
 
-    if (website.subscription.orderId !== orderId) {
-      console.log("❌ OrderId mismatch");
-      console.log("🧾 Website OrderId:", website.subscription.orderId);
-      console.log("🧾 Request OrderId:", orderId);
-
-      return res.status(400).json({
-        success: false,
-        message: "OrderId does not match current pending subscription",
-      });
-    }
-
-    console.log("✅ OrderId matched with pending subscription");
-
-    /* =========================================================
-       6) PAID TILL EXTEND LOGIC
-    ========================================================= */
-    const now = new Date();
-
-    const baseDate =
-      website.paidTill && new Date(website.paidTill) > now
-        ? new Date(website.paidTill)
-        : now;
-
-    const paidTill = new Date(baseDate);
-    paidTill.setMonth(paidTill.getMonth() + Number(durationMonths));
-
-    console.log("📅 PaidTill Calculation:");
-    console.log("⏳ Now:", now);
-    console.log("⏳ BaseDate:", baseDate);
-    console.log("⏳ DurationMonths:", durationMonths);
-    console.log("✅ New PaidTill:", paidTill);
-
-    /* =========================================================
-       7) UPDATE SUBSCRIPTION (PAID)
-    ========================================================= */
-    const oldSubscription = website.subscription;
-
-    const updatedSubscription = {
-      planType: oldSubscription.planType || "basic",
-      durationMonths: Number(durationMonths),
-      themeId: oldSubscription.themeId || website.themeId,
-
-      orderId,
-      paymentId,
-
-      amountPay: Number(oldSubscription.amountPay || 0),
-      amountPayPaise: Number(oldSubscription.amountPayPaise || 0),
-
-      status: "paid",
-      paidTill,
-
-      isActive: true,
-      purchasedAt: oldSubscription.purchasedAt || now,
+    // ✅ Save pending subscription
+    website.subscription = {
+        planType: theme.planType || "basic",
+        durationMonths: Number(durationMonths),
+        themeId,
+        orderId: order.id,
+        paymentId: "",
+        amountPay: amountRupees,
+        amountPayPaise: amount,
+        status: "pending",
+        paidTill: null,
+        purchasedAt: new Date(),
     };
 
-    console.log("🧾 Updated Subscription:", updatedSubscription);
+    // Optional: history me bhi daal do
+    website.subscriptionHistory.push(website.subscription);
 
-    /* =========================================================
-       8) MARK OLD HISTORY INACTIVE
-    ========================================================= */
-    website.subscriptionHistory = (website.subscriptionHistory || []).map((s) => ({
-      ...s,
-      isActive: false,
-    }));
-
-    /* =========================================================
-       9) SAVE NEW SUBSCRIPTION
-    ========================================================= */
-    website.subscription = updatedSubscription;
-    website.subscriptionHistory.push(updatedSubscription);
-
-    website.paidTill = paidTill;
-    website.isLive = true;
-
-    console.log("✅ Subscription saved + website marked live");
-
-    /* =========================================================
-       10) THEME UPGRADE (OPTIONAL)
-    ========================================================= */
-    const isUpgrade = upgrade === true || upgrade === "true";
-    console.log("🎨 Upgrade Flag:", isUpgrade);
-
-    if (isUpgrade) {
-      const newThemeId = theme?._id || theme?.themeId || null;
-
-      console.log("🎨 New ThemeId:", newThemeId);
-
-      if (!newThemeId || !mongoose.isValidObjectId(newThemeId)) {
-        console.log("❌ Invalid themeId for upgrade");
-        return res.status(400).json({
-          success: false,
-          message: "Theme is required for upgrade",
-        });
-      }
-
-      const oldThemeId = website.themeId;
-
-      if (String(oldThemeId) !== String(newThemeId)) {
-        website.themeHistory = website.themeHistory || [];
-        website.themeHistory.push({
-          oldThemeId,
-          newThemeId,
-          amountPay: String(updatedSubscription.amountPay || ""),
-          changedAt: new Date(),
-          reason: "upgrade",
-          orderId,
-          paymentId,
-        });
-
-        website.themeId = newThemeId;
-        console.log("✅ Theme upgraded & history saved");
-      } else {
-        console.log("⚠️ Same theme selected, no theme change required");
-      }
-    }
-
-    /* =========================================================
-       11) FINAL SAVE
-    ========================================================= */
     await website.save();
 
-    console.log("✅ Website saved successfully in DB");
+    res.status(201).json({
+        success: true,
+        data: {
+            orderId: order.id,
+            amount: order.amount,
+            currency: order.currency,
+            key_id: ENV.RAZORPAY_KEY_ID,
+        },
+    });
+});
+exports.verifyPayment = asyncHandler(async (req, res) => {
+    const {
+        driverId,
+        orderId,
+        paymentId,
+        signature,
+        durationMonths,
+        theme,
+        upgrade,
+    } = req.body;
+
+    console.log("========================================");
+    console.log("✅ VERIFY PAYMENT API HIT");
+    console.log("📌 Body:", req.body);
     console.log("========================================");
 
-    return res.status(200).json({
-      success: true,
-      message: isUpgrade
-        ? "Payment verified & theme upgraded successfully 🎉"
-        : "Payment verified successfully 🎉",
-      data: {
-        driverId: website.driverId,
-        subscription: website.subscription,
-        paidTill: website.paidTill,
-        themeId: website.themeId,
-        upgrade: isUpgrade,
-      },
-    });
-  } catch (error) {
-    console.log("🔥 ERROR:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Payment verification failed",
-      error: error.message,
-    });
-  }
+    if (!driverId || !orderId || !paymentId || !signature || !durationMonths) {
+        console.log("❌ Missing required fields");
+        return res.status(400).json({
+            success: false,
+            message: "Required payment fields missing",
+        });
+    }
+
+    try {
+        /* =========================================================
+           1) VERIFY SIGNATURE
+        ========================================================= */
+        const generatedSignature = crypto
+            .createHmac("sha256", ENV.RAZORPAY_KEY_SECRET)
+            .update(`${orderId}|${paymentId}`)
+            .digest("hex");
+
+        console.log("🔐 Generated Signature:", generatedSignature);
+        console.log("🔐 Received Signature :", signature);
+
+        if (generatedSignature !== signature) {
+            console.log("❌ Signature mismatch");
+            return res.status(400).json({
+                success: false,
+                message: "Invalid payment signature",
+            });
+        }
+
+        console.log("✅ Signature Verified Successfully");
+
+        /* =========================================================
+           2) FIND WEBSITE
+        ========================================================= */
+        const website = await Website.findOne({ driverId });
+
+        if (!website) {
+            console.log("❌ Website not found for driverId:", driverId);
+            return res.status(404).json({
+                success: false,
+                message: "Website not found",
+            });
+        }
+
+        console.log("✅ Website Found:", {
+            driverId: website.driverId,
+            websiteId: website._id,
+            themeId: website.themeId,
+            isLive: website.isLive,
+            paidTill: website.paidTill,
+        });
+
+        /* =========================================================
+           3) CLEAN OLD INVALID HISTORY (IMPORTANT FIX)
+           - Purane records me required fields missing the
+        ========================================================= */
+        website.subscriptionHistory = (website.subscriptionHistory || []).filter(
+            (s) => s && s.orderId && s.themeId
+        );
+
+        /* =========================================================
+           4) DUPLICATE CHECK (CORRECT)
+           - same paymentId => duplicate
+           - same orderId => duplicate ONLY if status paid
+        ========================================================= */
+        const alreadyExists = (website.subscriptionHistory || []).some((s) => {
+            if (s.paymentId && s.paymentId === paymentId) return true;
+            if (s.orderId === orderId && s.status === "paid") return true;
+            return false;
+        });
+
+        console.log("🔁 Duplicate Check:", alreadyExists);
+
+        if (alreadyExists) {
+            console.log("⚠️ Payment already verified, returning existing data.");
+            return res.status(200).json({
+                success: true,
+                message: "Payment already verified",
+                data: {
+                    driverId: website.driverId,
+                    subscription: website.subscription,
+                    paidTill: website.paidTill,
+                    themeId: website.themeId,
+                },
+            });
+        }
+
+        /* =========================================================
+           5) CHECK CURRENT PENDING SUBSCRIPTION
+        ========================================================= */
+        console.log("📌 Current subscription on website:", website.subscription);
+
+        if (!website.subscription) {
+            console.log("❌ No subscription found on website");
+            return res.status(400).json({
+                success: false,
+                message: "No subscription found",
+            });
+        }
+
+        if (website.subscription.orderId !== orderId) {
+            console.log("❌ OrderId mismatch");
+            console.log("🧾 Website OrderId:", website.subscription.orderId);
+            console.log("🧾 Request OrderId:", orderId);
+
+            return res.status(400).json({
+                success: false,
+                message: "OrderId does not match current pending subscription",
+            });
+        }
+
+        console.log("✅ OrderId matched with pending subscription");
+
+        /* =========================================================
+           6) PAID TILL EXTEND LOGIC
+        ========================================================= */
+        const now = new Date();
+
+        const baseDate =
+            website.paidTill && new Date(website.paidTill) > now
+                ? new Date(website.paidTill)
+                : now;
+
+        const paidTill = new Date(baseDate);
+        paidTill.setMonth(paidTill.getMonth() + Number(durationMonths));
+
+        console.log("📅 PaidTill Calculation:");
+        console.log("⏳ Now:", now);
+        console.log("⏳ BaseDate:", baseDate);
+        console.log("⏳ DurationMonths:", durationMonths);
+        console.log("✅ New PaidTill:", paidTill);
+
+        /* =========================================================
+           7) UPDATE SUBSCRIPTION (PAID)
+        ========================================================= */
+        const oldSubscription = website.subscription;
+
+        const updatedSubscription = {
+            planType: oldSubscription.planType || "basic",
+            durationMonths: Number(durationMonths),
+            themeId: oldSubscription.themeId || website.themeId,
+
+            orderId,
+            paymentId,
+
+            amountPay: Number(oldSubscription.amountPay || 0),
+            amountPayPaise: Number(oldSubscription.amountPayPaise || 0),
+
+            status: "paid",
+            paidTill,
+
+            isActive: true,
+            purchasedAt: oldSubscription.purchasedAt || now,
+        };
+
+        console.log("🧾 Updated Subscription:", updatedSubscription);
+
+        /* =========================================================
+           8) MARK OLD HISTORY INACTIVE
+        ========================================================= */
+        website.subscriptionHistory = (website.subscriptionHistory || []).map((s) => ({
+            ...s,
+            isActive: false,
+        }));
+
+        /* =========================================================
+           9) SAVE NEW SUBSCRIPTION
+        ========================================================= */
+        website.subscription = updatedSubscription;
+        website.subscriptionHistory.push(updatedSubscription);
+
+        website.paidTill = paidTill;
+        website.isLive = true;
+
+        console.log("✅ Subscription saved + website marked live");
+
+        /* =========================================================
+           10) THEME UPGRADE (OPTIONAL)
+        ========================================================= */
+        const isUpgrade = upgrade === true || upgrade === "true";
+        console.log("🎨 Upgrade Flag:", isUpgrade);
+
+        if (isUpgrade) {
+            const newThemeId = theme?._id || theme?.themeId || null;
+
+            console.log("🎨 New ThemeId:", newThemeId);
+
+            if (!newThemeId || !mongoose.isValidObjectId(newThemeId)) {
+                console.log("❌ Invalid themeId for upgrade");
+                return res.status(400).json({
+                    success: false,
+                    message: "Theme is required for upgrade",
+                });
+            }
+
+            const oldThemeId = website.themeId;
+
+            if (String(oldThemeId) !== String(newThemeId)) {
+                website.themeHistory = website.themeHistory || [];
+                website.themeHistory.push({
+                    oldThemeId,
+                    newThemeId,
+                    amountPay: String(updatedSubscription.amountPay || ""),
+                    changedAt: new Date(),
+                    reason: "upgrade",
+                    orderId,
+                    paymentId,
+                });
+
+                website.themeId = newThemeId;
+                console.log("✅ Theme upgraded & history saved");
+            } else {
+                console.log("⚠️ Same theme selected, no theme change required");
+            }
+        }
+
+        /* =========================================================
+           11) FINAL SAVE
+        ========================================================= */
+        await website.save();
+
+        console.log("✅ Website saved successfully in DB");
+        console.log("========================================");
+
+        return res.status(200).json({
+            success: true,
+            message: isUpgrade
+                ? "Payment verified & theme upgraded successfully 🎉"
+                : "Payment verified successfully 🎉",
+            data: {
+                driverId: website.driverId,
+                subscription: website.subscription,
+                paidTill: website.paidTill,
+                themeId: website.themeId,
+                upgrade: isUpgrade,
+            },
+        });
+    } catch (error) {
+        console.log("🔥 ERROR:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Payment verification failed",
+            error: error.message,
+        });
+    }
 });
 
 
@@ -1364,218 +1385,218 @@ exports.getSubscriptionStatus = asyncHandler(async (req, res) => {
 });
 
 const calculateProratedRefund = (oldPrice, oldDurationMonths, paidTill) => {
-  if (!paidTill) return 0;
+    if (!paidTill) return 0;
 
-  const now = new Date();
-  const paidTillDate = new Date(paidTill);
+    const now = new Date();
+    const paidTillDate = new Date(paidTill);
 
-  const remainingMs = paidTillDate.getTime() - now.getTime();
-  if (remainingMs <= 0) return 0;
+    const remainingMs = paidTillDate.getTime() - now.getTime();
+    if (remainingMs <= 0) return 0;
 
-  const totalMsInPlan = Number(oldDurationMonths) * 30 * 24 * 60 * 60 * 1000;
-  if (!totalMsInPlan || totalMsInPlan <= 0) return 0;
+    const totalMsInPlan = Number(oldDurationMonths) * 30 * 24 * 60 * 60 * 1000;
+    if (!totalMsInPlan || totalMsInPlan <= 0) return 0;
 
-  const remainingRatio = Math.min(remainingMs / totalMsInPlan, 1);
-  return Math.round(Number(oldPrice) * remainingRatio);
+    const remainingRatio = Math.min(remainingMs / totalMsInPlan, 1);
+    return Math.round(Number(oldPrice) * remainingRatio);
 };
 
 const getLatestSubscription = (website) => {
-  if (website.subscription && website.subscription.orderId) {
-    return website.subscription;
-  }
+    if (website.subscription && website.subscription.orderId) {
+        return website.subscription;
+    }
 
-  const paidSubs = (website.subscriptionHistory || []).filter(
-    (s) => s && s.status === "paid"
-  );
+    const paidSubs = (website.subscriptionHistory || []).filter(
+        (s) => s && s.status === "paid"
+    );
 
-  if (!paidSubs.length) return null;
+    if (!paidSubs.length) return null;
 
-  paidSubs.sort((a, b) => new Date(b.purchasedAt) - new Date(a.purchasedAt));
-  return paidSubs[0];
+    paidSubs.sort((a, b) => new Date(b.purchasedAt) - new Date(a.purchasedAt));
+    return paidSubs[0];
 };
 
 /* ==========================================
    CHANGE THEME + CALCULATE PAYABLE AMOUNT
    ========================================== */
 exports.changeThemeAndCalculatePrice = asyncHandler(async (req, res) => {
-  const { driverId } = req.params;
+    const { driverId } = req.params;
 
-  const {
-    newThemeId,
-    plan, // { durationMonths, price }
-    upgrade = true,
-  } = req.body;
+    const {
+        newThemeId,
+        plan, // { durationMonths, price }
+        upgrade = true,
+    } = req.body;
 
-  console.log("🟢 Request body:", req.body);
+    console.log("🟢 Request body:", req.body);
 
-  /* ================= VALIDATIONS ================= */
-  if (!driverId || !mongoose.isValidObjectId(driverId)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid or missing driverId",
-    });
-  }
-
-  if (!newThemeId || !mongoose.isValidObjectId(newThemeId)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid or missing newThemeId",
-    });
-  }
-
-  if (!plan || typeof plan !== "object") {
-    return res.status(400).json({
-      success: false,
-      message: "Selected plan is required",
-    });
-  }
-
-  if (!plan.durationMonths || !plan.price) {
-    return res.status(400).json({
-      success: false,
-      message: "Plan must include durationMonths and price",
-    });
-  }
-
-  const durationMonths = Number(plan.durationMonths);
-  const newPrice = Number(plan.price);
-
-  if (!durationMonths || durationMonths < 1) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid durationMonths in plan",
-    });
-  }
-
-  if (!newPrice || newPrice < 1) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid price in plan",
-    });
-  }
-
-  /* ================= FIND WEBSITE ================= */
-  const website = await Website.findOne({ driverId });
-  if (!website) {
-    return res.status(404).json({
-      success: false,
-      message: "Website not found",
-    });
-  }
-
-  /* ================= CURRENT THEME ================= */
-  const oldTheme = await Theme.findById(website.themeId);
-  if (!oldTheme) {
-    return res.status(404).json({
-      success: false,
-      message: "Current theme not found",
-    });
-  }
-
-  /* ================= NEW THEME ================= */
-  const newTheme = await Theme.findById(newThemeId);
-  if (!newTheme) {
-    return res.status(404).json({
-      success: false,
-      message: "New theme not found",
-    });
-  }
-
-  /* ================= LATEST SUBSCRIPTION ================= */
-  const latestSub = getLatestSubscription(website);
-
-  const oldDurationMonths = Number(latestSub?.durationMonths || 0);
-  const oldPaidTill = latestSub?.paidTill || website.paidTill || null;
-
-  console.log("📌 Latest Subscription Used:", latestSub);
-
-  /* ================= OLD PLAN PRICE (FROM OLD THEME) ================= */
-  let oldPlan = null;
-
-  if (oldDurationMonths) {
-    oldPlan = oldTheme.pricePlans?.find(
-      (p) => p.isActive && Number(p.durationMonths) === Number(oldDurationMonths)
-    );
-  }
-
-  if (!oldPlan) oldPlan = oldTheme.pricePlans?.find((p) => p.isActive);
-  if (!oldPlan) oldPlan = oldTheme.pricePlans?.[0];
-
-  const oldPrice = Number(oldPlan?.price || latestSub?.amountPay || 0);
-
-  /* ================= PRORATED REFUND ================= */
-  let proratedRefund = 0;
-
-  const hasActivePaid = oldPaidTill && new Date(oldPaidTill) > new Date();
-
-  if (upgrade === true && hasActivePaid && oldPrice > 0 && oldDurationMonths > 0) {
-    proratedRefund = calculateProratedRefund(
-      oldPrice,
-      oldDurationMonths,
-      oldPaidTill
-    );
-  }
-
-  /* ================= FINAL AMOUNT ================= */
-  let amountToPay = newPrice - proratedRefund;
-  amountToPay = Math.max(0, amountToPay);
-
-  const MIN_UPGRADE_FEE = 49;
-
-  if (upgrade === true && amountToPay === 0) {
-    amountToPay = MIN_UPGRADE_FEE;
-  }
-
-  /* ================= MESSAGE ================= */
-  let message = "";
-
-  if (upgrade === true) {
-    if (amountToPay === MIN_UPGRADE_FEE) {
-      message =
-        `Upgrade charge: ₹${MIN_UPGRADE_FEE}\n` +
-        `Aapka remaining subscription amount adjust ho gaya hai.\n` +
-        `Bas ₹${MIN_UPGRADE_FEE} pay karke upgrade complete kar sakte hain!`;
-    } else {
-      message =
-        `Upgrade ka total kharcha: ₹${amountToPay}\n` +
-        `Aapke bache hue ₹${proratedRefund} rupaye adjust kar diye gaye hain.\n\n` +
-        `Bas ₹${amountToPay} pay karke upgrade complete kar sakte hain!`;
+    /* ================= VALIDATIONS ================= */
+    if (!driverId || !mongoose.isValidObjectId(driverId)) {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid or missing driverId",
+        });
     }
-  } else {
-    message =
-      `Plan purchase amount: ₹${amountToPay}\n` +
-      `Proceed to payment to activate your website.`;
-  }
 
-  /* ================= RESPONSE ================= */
-  return res.status(200).json({
-    success: true,
-    data: {
-      driverId,
+    if (!newThemeId || !mongoose.isValidObjectId(newThemeId)) {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid or missing newThemeId",
+        });
+    }
 
-      // Current
-      currentThemeId: website.themeId,
-      currentThemeName: oldTheme.name,
-      currentPlanPrice: oldPrice,
-      currentPaidTill: oldPaidTill,
+    if (!plan || typeof plan !== "object") {
+        return res.status(400).json({
+            success: false,
+            message: "Selected plan is required",
+        });
+    }
 
-      // New
-      newThemeId,
-      newThemeName: newTheme.name,
-      selectedPlan: {
-        durationMonths,
-        price: newPrice,
-      },
+    if (!plan.durationMonths || !plan.price) {
+        return res.status(400).json({
+            success: false,
+            message: "Plan must include durationMonths and price",
+        });
+    }
 
-      // Upgrade calculation
-      upgrade: upgrade === true,
-      proratedRefund,
-      amountToPay,
-      amountInPaise: Math.round(amountToPay * 100),
-      currency: "INR",
-      message,
-    },
-  });
+    const durationMonths = Number(plan.durationMonths);
+    const newPrice = Number(plan.price);
+
+    if (!durationMonths || durationMonths < 1) {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid durationMonths in plan",
+        });
+    }
+
+    if (!newPrice || newPrice < 1) {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid price in plan",
+        });
+    }
+
+    /* ================= FIND WEBSITE ================= */
+    const website = await Website.findOne({ driverId });
+    if (!website) {
+        return res.status(404).json({
+            success: false,
+            message: "Website not found",
+        });
+    }
+
+    /* ================= CURRENT THEME ================= */
+    const oldTheme = await Theme.findById(website.themeId);
+    if (!oldTheme) {
+        return res.status(404).json({
+            success: false,
+            message: "Current theme not found",
+        });
+    }
+
+    /* ================= NEW THEME ================= */
+    const newTheme = await Theme.findById(newThemeId);
+    if (!newTheme) {
+        return res.status(404).json({
+            success: false,
+            message: "New theme not found",
+        });
+    }
+
+    /* ================= LATEST SUBSCRIPTION ================= */
+    const latestSub = getLatestSubscription(website);
+
+    const oldDurationMonths = Number(latestSub?.durationMonths || 0);
+    const oldPaidTill = latestSub?.paidTill || website.paidTill || null;
+
+    console.log("📌 Latest Subscription Used:", latestSub);
+
+    /* ================= OLD PLAN PRICE (FROM OLD THEME) ================= */
+    let oldPlan = null;
+
+    if (oldDurationMonths) {
+        oldPlan = oldTheme.pricePlans?.find(
+            (p) => p.isActive && Number(p.durationMonths) === Number(oldDurationMonths)
+        );
+    }
+
+    if (!oldPlan) oldPlan = oldTheme.pricePlans?.find((p) => p.isActive);
+    if (!oldPlan) oldPlan = oldTheme.pricePlans?.[0];
+
+    const oldPrice = Number(oldPlan?.price || latestSub?.amountPay || 0);
+
+    /* ================= PRORATED REFUND ================= */
+    let proratedRefund = 0;
+
+    const hasActivePaid = oldPaidTill && new Date(oldPaidTill) > new Date();
+
+    if (upgrade === true && hasActivePaid && oldPrice > 0 && oldDurationMonths > 0) {
+        proratedRefund = calculateProratedRefund(
+            oldPrice,
+            oldDurationMonths,
+            oldPaidTill
+        );
+    }
+
+    /* ================= FINAL AMOUNT ================= */
+    let amountToPay = newPrice - proratedRefund;
+    amountToPay = Math.max(0, amountToPay);
+
+    const MIN_UPGRADE_FEE = 49;
+
+    if (upgrade === true && amountToPay === 0) {
+        amountToPay = MIN_UPGRADE_FEE;
+    }
+
+    /* ================= MESSAGE ================= */
+    let message = "";
+
+    if (upgrade === true) {
+        if (amountToPay === MIN_UPGRADE_FEE) {
+            message =
+                `Upgrade charge: ₹${MIN_UPGRADE_FEE}\n` +
+                `Aapka remaining subscription amount adjust ho gaya hai.\n` +
+                `Bas ₹${MIN_UPGRADE_FEE} pay karke upgrade complete kar sakte hain!`;
+        } else {
+            message =
+                `Upgrade ka total kharcha: ₹${amountToPay}\n` +
+                `Aapke bache hue ₹${proratedRefund} rupaye adjust kar diye gaye hain.\n\n` +
+                `Bas ₹${amountToPay} pay karke upgrade complete kar sakte hain!`;
+        }
+    } else {
+        message =
+            `Plan purchase amount: ₹${amountToPay}\n` +
+            `Proceed to payment to activate your website.`;
+    }
+
+    /* ================= RESPONSE ================= */
+    return res.status(200).json({
+        success: true,
+        data: {
+            driverId,
+
+            // Current
+            currentThemeId: website.themeId,
+            currentThemeName: oldTheme.name,
+            currentPlanPrice: oldPrice,
+            currentPaidTill: oldPaidTill,
+
+            // New
+            newThemeId,
+            newThemeName: newTheme.name,
+            selectedPlan: {
+                durationMonths,
+                price: newPrice,
+            },
+
+            // Upgrade calculation
+            upgrade: upgrade === true,
+            proratedRefund,
+            amountToPay,
+            amountInPaise: Math.round(amountToPay * 100),
+            currency: "INR",
+            message,
+        },
+    });
 });
 
 

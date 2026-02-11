@@ -55,9 +55,9 @@ const ThemeSchema = new mongoose.Schema(
 );
 
 
-ThemeSchema.pre('save', async function (next) {
+ThemeSchema.pre('save', async function () {
   if (!this.isNew || this.displayOrder !== undefined) {
-    return next();
+    // return next();
   }
 
   const lastTheme = await mongoose
