@@ -33,13 +33,49 @@ const SubscriptionSchema = new mongoose.Schema(
     },
 
     amountPay: {
-      type: Number, // rupees
+      type: Number, // rupees (FINAL PAYABLE after discount)
       required: true,
     },
 
     amountPayPaise: {
-      type: Number, // paise
+      type: Number, // paise (FINAL PAYABLE after discount)
       required: true,
+    },
+
+    // ✅ Coupon info stored in subscription
+    coupon: {
+      couponId: {
+        type: mongoose.Schema.ObjectId,
+        ref: "Coupon",
+        default: null,
+      },
+
+      code: {
+        type: String,
+        default: "",
+        uppercase: true,
+        trim: true,
+      },
+
+      discountAmount: {
+        type: Number, // rupees
+        default: 0,
+      },
+
+      baseAmount: {
+        type: Number, // rupees (original price before discount)
+        default: 0,
+      },
+
+      finalAmount: {
+        type: Number, // rupees (after discount)
+        default: 0,
+      },
+
+      appliedAt: {
+        type: Date,
+        default: null,
+      },
     },
 
     status: {
@@ -61,6 +97,7 @@ const SubscriptionSchema = new mongoose.Schema(
   },
   { _id: false }
 );
+
 
 const BasicInfoSchema = new mongoose.Schema(
   {

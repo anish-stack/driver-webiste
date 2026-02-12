@@ -52,6 +52,7 @@ app.use("/api/website", WebsiteRoutes)
 app.use("/api/contact", ContactRoutes)
 app.use("/api/trip", TripRoutes)
 
+app.use("/api/v1/admin/coupon", require("./routes/coupon.routes"));
 
 /* -------------------- 404 Handler -------------------- */
 app.use(notFound);

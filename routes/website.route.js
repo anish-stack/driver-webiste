@@ -26,6 +26,7 @@ const {
   checkWebsiteUrlPresentOrNot,
   changeThemeAndCalculatePrice,
   getWebsiteBySlug,
+  updateWebsiteUrl,
 
 } = require("../controllers/website.controller");
 
@@ -44,7 +45,7 @@ const {
 } = require('../controllers/website.admin.controller');
 
 router.get("/:driverId", getWebsite);
-router.get("/detail/:slug",getWebsiteBySlug);
+router.get("/detail/:slug", getWebsiteBySlug);
 
 
 router.patch("/:driverId/basic-info", uploadBuffer.single("logo"), updateBasicInfo);
@@ -53,8 +54,8 @@ router.patch("/:driverId/popular-prices", updatePopularPrices);
 router.post("/:driverId/popular-prices", addPopularPrice);
 router.delete("/:driverId/popular-prices/:index", deletePopularPrice);
 
-router.patch("/:driverId/packages/:index", uploadBuffer.single("image"),updatePackages);
-router.post("/:driverId/packages", uploadBuffer.single("image"),addPackage);
+router.patch("/:driverId/packages/:index", uploadBuffer.single("image"), updatePackages);
+router.post("/:driverId/packages", uploadBuffer.single("image"), addPackage);
 router.delete("/:driverId/packages/:index", deletePackage);
 
 router.patch("/:driverId/reviews", updateReviews);
@@ -67,12 +68,12 @@ router.patch("/:driverId/live-status", toggleLiveStatus);
 
 router.delete("/:driverId", deleteWebsite);
 
-router.get('/step/:driverId',getWhichStepIAmOn)
+router.get('/step/:driverId', getWhichStepIAmOn)
 router.post("/qr-code", genrateQrCodeForWebsite);
 
 
-router.post("/check-webiste-url",checkWebsiteUrlPresentOrNot)
-router.post("/check-webiste-theme/:driverId",changeThemeAndCalculatePrice)
+router.post("/check-webiste-url", checkWebsiteUrlPresentOrNot)
+router.post("/check-webiste-theme/:driverId", changeThemeAndCalculatePrice)
 
 
 router.patch(
@@ -85,12 +86,10 @@ router.get(
   getSocialLinks
 );
 
-
 router.post("/payment/create-order", createPaymentOrder);
 router.post("/payment/verify", verifyPayment);
 router.get("/subscription/:driverId", getSubscriptionStatus);
-
-
+router.put("/update-webiste-url/:driverId", updateWebsiteUrl)
 
 
 

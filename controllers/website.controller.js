@@ -8,6 +8,7 @@ const QRCode = require("qrcode");
 const ENV = require('../config/env')
 const crypto = require('crypto')
 const Razorpay = require('razorpay');
+const Coupon = require("../models/coupon.model");
 
 var instance = new Razorpay({
     key_id: ENV.RAZORPAY_KEY_ID,
@@ -1012,8 +1013,91 @@ exports.checkWebsiteUrlPresentOrNot = async (req, res) => {
     }
 };
 
+const validateAndCalculateCoupon = async ({
+    couponCode,
+    driverId,
+    orderAmountRupees,
+}) => {
+    if (!couponCode) {
+        return {
+            applied: false,
+            discountAmount: 0,
+            finalAmount: orderAmountRupees,
+            coupon: null,
+        };
+    }
+
+    const code = couponCode.trim().toUpperCase();
+
+    const coupon = await Coupon.findOne({ code });
+
+    if (!coupon) {
+        throw new Error("Invalid coupon code");
+    }
+
+    if (!coupon.active) {
+        throw new Error("Coupon is inactive");
+    }
+
+    const now = new Date();
+
+    if (coupon.startDate && now < coupon.startDate) {
+        throw new Error("Coupon not started yet");
+    }
+
+    if (coupon.expireDate && now > coupon.expireDate) {
+        throw new Error("Coupon expired");
+    }
+
+    // min order
+    if (coupon.minOrderValue > 0 && orderAmountRupees < coupon.minOrderValue) {
+        throw new Error(`Minimum order value is ₹${coupon.minOrderValue}`);
+    }
+
+    // total usage
+    if (coupon.totalUsageLimit > 0 && coupon.usedCount >= coupon.totalUsageLimit) {
+        throw new Error("Coupon usage limit reached");
+    }
+
+    // per user usage
+    const userUsage = (coupon.usedByUsers || []).find(
+        (u) => String(u.driverId) === String(driverId)
+    );
+
+    if (userUsage && userUsage.usedCount >= coupon.perUserUsageLimit) {
+        throw new Error("You already used this coupon maximum times");
+    }
+
+    // calculate discount
+    let discountAmount = 0;
+
+    if (coupon.discountType === "FLAT") {
+        discountAmount = coupon.amountOff;
+    }
+
+    if (coupon.discountType === "PERCENT") {
+        discountAmount = (orderAmountRupees * coupon.percentOff) / 100;
+
+        if (coupon.maxDiscountAmount > 0) {
+            discountAmount = Math.min(discountAmount, coupon.maxDiscountAmount);
+        }
+    }
+
+    discountAmount = Math.min(discountAmount, orderAmountRupees);
+
+    const finalAmount = orderAmountRupees - discountAmount;
+
+    return {
+        applied: true,
+        coupon,
+        discountAmount,
+        finalAmount,
+    };
+};
+
+
 exports.createPaymentOrder = asyncHandler(async (req, res) => {
-    const { driverId, themeId, durationMonths, slug, websiteId, upgrade, amountInPaise } = req.body;
+    const { driverId, themeId, durationMonths, slug, websiteId, upgrade, amountInPaise, couponCode, } = req.body;
     console.log(req.body)
     if (!driverId || !themeId || !durationMonths) {
         return res.status(400).json({ success: false, message: "Required fields missing" });
@@ -1023,12 +1107,10 @@ exports.createPaymentOrder = asyncHandler(async (req, res) => {
     if (!theme) {
         return res.status(404).json({ success: false, message: "Theme not found" });
     }
-    console.log(theme)
     const plan = theme.pricePlans.find(
         (p) => p.durationMonths === Number(durationMonths) && p.isActive
     );
 
-    console.log(plan)
     if (!plan) {
         return res.status(400).json({ success: false, message: "Invalid plan duration" });
     }
@@ -1036,13 +1118,61 @@ exports.createPaymentOrder = asyncHandler(async (req, res) => {
     const amount = upgrade ? Number(amountInPaise) : Number(plan.price) * 100; // paise
     const amountRupees = amount / 100;
 
-    console.log("Amount", amount)
+    let couponInfo = {
+        applied: false,
+        discountAmount: 0,
+        finalAmount: amountRupees,
+        coupon: null,
+    };
+
+
+    try {
+        couponInfo = await validateAndCalculateCoupon({
+            couponCode,
+            driverId,
+            orderAmountRupees: amountRupees,
+        });
+    } catch (err) {
+        return res.status(400).json({
+            success: false,
+            message: err.message || "Invalid coupon",
+        });
+    }
+
+    // final amount in paise
+    const finalAmountPaise = Math.round(couponInfo.finalAmount * 100);
+
+    // safety: never 0 amount for razorpay
+    if (finalAmountPaise < 100) {
+        return res.status(400).json({
+            success: false,
+            message: "Final amount too low after discount",
+        });
+    }
+
+    console.log("ouponInfo", couponInfo)
     const order = await instance.orders.create({
-        amount,
+        amount: finalAmountPaise,
         currency: "INR",
         receipt: `receipt_${Date.now()}`,
-        notes: { driverId, themeId, durationMonths, websiteId, slug, upgrade: !!upgrade },
+        notes: {
+            driverId,
+            themeId,
+            durationMonths,
+            websiteId,
+            slug,
+            upgrade: !!upgrade,
+
+            // coupon info
+            couponApplied: couponInfo.applied,
+            couponCode: couponInfo.coupon?.code || "",
+            couponId: couponInfo.coupon?._id?.toString() || "",
+            discountAmount: couponInfo.discountAmount,
+            baseAmount: amountRupees,
+            finalAmount: couponInfo.finalAmount,
+        },
     });
+
 
     // ✅ Save slug on order create
     const website = await Website.findById(websiteId);
@@ -1061,10 +1191,19 @@ exports.createPaymentOrder = asyncHandler(async (req, res) => {
         themeId,
         orderId: order.id,
         paymentId: "",
-        amountPay: amountRupees,
-        amountPayPaise: amount,
+        amountPay: couponInfo.finalAmount,       // ✅ FINAL AMOUNT
+        amountPayPaise: finalAmountPaise,
         status: "pending",
         paidTill: null,
+        coupon: couponInfo.applied
+            ? {
+                couponId: couponInfo.coupon._id,
+                code: couponInfo.coupon.code,
+                discountAmount: couponInfo.discountAmount,
+                baseAmount: amountRupees,
+                finalAmount: couponInfo.finalAmount,
+            }
+            : null,
         purchasedAt: new Date(),
     };
 
@@ -1080,6 +1219,14 @@ exports.createPaymentOrder = asyncHandler(async (req, res) => {
             amount: order.amount,
             currency: order.currency,
             key_id: ENV.RAZORPAY_KEY_ID,
+            coupon: couponInfo.applied
+                ? {
+                    code: couponInfo.coupon.code,
+                    discountAmount: couponInfo.discountAmount,
+                    baseAmount: amountRupees,
+                    finalAmount: couponInfo.finalAmount,
+                }
+                : null,
         },
     });
 });
@@ -1094,10 +1241,6 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
         upgrade,
     } = req.body;
 
-    console.log("========================================");
-    console.log("✅ VERIFY PAYMENT API HIT");
-    console.log("📌 Body:", req.body);
-    console.log("========================================");
 
     if (!driverId || !orderId || !paymentId || !signature || !durationMonths) {
         console.log("❌ Missing required fields");
@@ -1116,8 +1259,6 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
             .update(`${orderId}|${paymentId}`)
             .digest("hex");
 
-        console.log("🔐 Generated Signature:", generatedSignature);
-        console.log("🔐 Received Signature :", signature);
 
         if (generatedSignature !== signature) {
             console.log("❌ Signature mismatch");
@@ -1126,8 +1267,6 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
                 message: "Invalid payment signature",
             });
         }
-
-        console.log("✅ Signature Verified Successfully");
 
         /* =========================================================
            2) FIND WEBSITE
@@ -1142,13 +1281,6 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
             });
         }
 
-        console.log("✅ Website Found:", {
-            driverId: website.driverId,
-            websiteId: website._id,
-            themeId: website.themeId,
-            isLive: website.isLive,
-            paidTill: website.paidTill,
-        });
 
         /* =========================================================
            3) CLEAN OLD INVALID HISTORY (IMPORTANT FIX)
@@ -1210,7 +1342,60 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
         }
 
         console.log("✅ OrderId matched with pending subscription");
+        try {
+            const subCoupon = website.subscription?.coupon;
 
+            if (subCoupon?.couponId && subCoupon?.code) {
+                console.log("🎟 Coupon detected in subscription:", subCoupon);
+
+                const coupon = await Coupon.findById(subCoupon.couponId);
+
+                if (coupon) {
+                    // total usage limit check again
+                    if (coupon.totalUsageLimit > 0 && coupon.usedCount >= coupon.totalUsageLimit) {
+                        return res.status(400).json({
+                            success: false,
+                            message: "Coupon usage limit reached (during confirm)",
+                        });
+                    }
+
+                    // per user usage check again
+                    const userUsage = (coupon.usedByUsers || []).find(
+                        (u) => String(u.driverId) === String(driverId)
+                    );
+
+                    if (userUsage && userUsage.usedCount >= coupon.perUserUsageLimit) {
+                        return res.status(400).json({
+                            success: false,
+                            message: "Coupon per-user usage limit reached",
+                        });
+                    }
+
+                    // update usage
+                    coupon.usedCount += 1;
+
+                    if (userUsage) {
+                        userUsage.usedCount += 1;
+                        userUsage.usedAt = new Date();
+                    } else {
+                        coupon.usedByUsers.push({
+                            driverId,
+                            usedCount: 1,
+                            usedAt: new Date(),
+                        });
+                    }
+
+                    await coupon.save();
+                    console.log("✅ Coupon usage confirmed successfully");
+                } else {
+                    console.log("⚠️ Coupon not found, skipping usage confirm");
+                }
+            } else {
+                console.log("🎟 No coupon applied");
+            }
+        } catch (err) {
+            console.log("🔥 Coupon confirm error:", err.message);
+        }
         /* =========================================================
            6) PAID TILL EXTEND LOGIC
         ========================================================= */
@@ -1224,11 +1409,7 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
         const paidTill = new Date(baseDate);
         paidTill.setMonth(paidTill.getMonth() + Number(durationMonths));
 
-        console.log("📅 PaidTill Calculation:");
-        console.log("⏳ Now:", now);
-        console.log("⏳ BaseDate:", baseDate);
-        console.log("⏳ DurationMonths:", durationMonths);
-        console.log("✅ New PaidTill:", paidTill);
+
 
         /* =========================================================
            7) UPDATE SUBSCRIPTION (PAID)
@@ -1239,7 +1420,7 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
             planType: oldSubscription.planType || "basic",
             durationMonths: Number(durationMonths),
             themeId: oldSubscription.themeId || website.themeId,
-
+            coupon: oldSubscription.coupon || null,
             orderId,
             paymentId,
 
@@ -1252,6 +1433,10 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
             isActive: true,
             purchasedAt: oldSubscription.purchasedAt || now,
         };
+
+        if (updatedSubscription.coupon) {
+            updatedSubscription.coupon.appliedAt = new Date();
+        }
 
         console.log("🧾 Updated Subscription:", updatedSubscription);
 
@@ -1657,6 +1842,93 @@ exports.applyNewTheme = asyncHandler(async (req, res) => {
             newThemeName: newTheme.name,
             paidTill,
             isLive: true,
+        },
+    });
+});
+
+
+exports.updateWebsiteUrl = asyncHandler(async (req, res) => {
+    const { driverId } = req.params;
+    let { slug } = req.body;
+
+    // ✅ Validation 1: driverId required
+    if (!driverId) {
+        return res.status(400).json({
+            success: false,
+            message: "driverId is required",
+        });
+    }
+
+    // ✅ Validation 2: Check if driver's website exists
+    const website = await Website.findOne({ driverId });
+
+    if (!website) {
+        return res.status(404).json({
+            success: false,
+            message: "Website not found for this driver",
+        });
+    }
+
+
+    // ✅ Validation 4: slug required
+    slug = (slug || "").toString().trim().toLowerCase();
+
+    if (!slug) {
+        return res.status(400).json({
+            success: false,
+            message: "Website URL (slug) is required",
+        });
+    }
+
+    // ✅ Validation 5: slug format (only a-z, 0-9, -, min 4, max 30)
+    const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+    
+    if (!slugRegex.test(slug)) {
+        return res.status(400).json({
+            success: false,
+            message: "Only lowercase letters, numbers, and single hyphens allowed",
+        });
+    }
+
+    if (slug.length < 4) {
+        return res.status(400).json({
+            success: false,
+            message: "URL must be at least 4 characters long",
+        });
+    }
+
+    if (slug.length > 30) {
+        return res.status(400).json({
+            success: false,
+            message: "URL too long (maximum 30 characters)",
+        });
+    }
+
+    // ✅ Validation 6: Check if slug is already taken (by another driver)
+    const existingWebsite = await Website.findOne({ 
+        website_url: slug,
+        driverId: { $ne: driverId } // Not the same driver
+    }).lean();
+
+    if (existingWebsite) {
+        return res.status(400).json({
+            success: false,
+            message: "This URL is already taken by another driver",
+            available: false,
+        });
+    }
+
+    // ✅ Update the website URL
+    website.website_url = slug;
+    await website.save();
+
+    return res.status(200).json({
+        success: true,
+        message: "Website URL updated successfully",
+        data: {
+            driverId: website.driverId,
+            website_url: website.website_url,
+            slug: slug,
         },
     });
 });
