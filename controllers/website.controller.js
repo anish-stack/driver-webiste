@@ -711,7 +711,7 @@ exports.genrateQrCodeForWebsite = async (req, res) => {
             });
         }
 
-        const url = `https://taxisafar.com/${website?.website_url}`;
+        const url = `https://${website?.website_url}.taxihero.in`;
 
         /* ===== Generate QR (buffer) ===== */
         const qrBuffer = await QRCode.toBuffer(url, {
@@ -1882,7 +1882,7 @@ exports.updateWebsiteUrl = asyncHandler(async (req, res) => {
 
     // ✅ Validation 5: slug format (only a-z, 0-9, -, min 4, max 30)
     const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-    
+
     if (!slugRegex.test(slug)) {
         return res.status(400).json({
             success: false,
@@ -1905,7 +1905,7 @@ exports.updateWebsiteUrl = asyncHandler(async (req, res) => {
     }
 
     // ✅ Validation 6: Check if slug is already taken (by another driver)
-    const existingWebsite = await Website.findOne({ 
+    const existingWebsite = await Website.findOne({
         website_url: slug,
         driverId: { $ne: driverId } // Not the same driver
     }).lean();
