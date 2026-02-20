@@ -1096,9 +1096,22 @@ const validateAndCalculateCoupon = async ({
 };
 
 
+const GST_PERCENTAGE = 18;
+
 exports.createPaymentOrder = asyncHandler(async (req, res) => {
-    const { driverId, themeId, durationMonths, slug, websiteId, upgrade, amountInPaise, couponCode, } = req.body;
-    console.log(req.body)
+    const {
+        driverId,
+        themeId,
+        durationMonths,
+        slug,
+        websiteId,
+        upgrade,
+        amountInPaise,      // only used/trusted for upgrade flow
+        couponCode,
+    } = req.body;
+
+    console.log("Received body:", req.body);
+
     if (!driverId || !themeId || !durationMonths) {
         return res.status(400).json({ success: false, message: "Required fields missing" });
     }
@@ -1107,6 +1120,7 @@ exports.createPaymentOrder = asyncHandler(async (req, res) => {
     if (!theme) {
         return res.status(404).json({ success: false, message: "Theme not found" });
     }
+
     const plan = theme.pricePlans.find(
         (p) => p.durationMonths === Number(durationMonths) && p.isActive
     );
@@ -1115,34 +1129,67 @@ exports.createPaymentOrder = asyncHandler(async (req, res) => {
         return res.status(400).json({ success: false, message: "Invalid plan duration" });
     }
 
-    const amount = upgrade ? Number(amountInPaise) : Number(plan.price) * 100; // paise
-    const amountRupees = amount / 100;
+    let baseAmountRupees = Number(plan.price);   // original price per month plan
+
+    // ────────────────────────────────────────────────
+    //  1. Upgrade flow → trust client-provided amountInPaise
+    // ────────────────────────────────────────────────
+    if (upgrade) {
+        if (!amountInPaise || amountInPaise <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid amountInPaise for upgrade",
+            });
+        }
+
+        const finalAmountPaise = Number(amountInPaise);
+
+        // Proceed to create order with trusted upgrade amount
+        return await createRazorpayOrderAndSave({
+            res,
+            driverId,
+            themeId,
+            durationMonths,
+            websiteId,
+            slug,
+            upgrade: true,
+            finalAmountPaise,
+            couponCode,
+            baseAmountRupees: null, // not used in upgrade
+        });
+    }
+
+    // ────────────────────────────────────────────────
+    //  2. New purchase → calculate base + GST - coupon
+    // ────────────────────────────────────────────────
+    const baseAfterGST = baseAmountRupees * (1 + GST_PERCENTAGE / 100);
+    let finalAmountRupees = Math.round(baseAfterGST * 100) / 100; // keep 2 decimals
 
     let couponInfo = {
         applied: false,
         discountAmount: 0,
-        finalAmount: amountRupees,
+        finalAmount: finalAmountRupees,
         coupon: null,
     };
 
-
-    try {
-        couponInfo = await validateAndCalculateCoupon({
-            couponCode,
-            driverId,
-            orderAmountRupees: amountRupees,
-        });
-    } catch (err) {
-        return res.status(400).json({
-            success: false,
-            message: err.message || "Invalid coupon",
-        });
+    // Apply coupon if provided (coupon applied on amount **after GST**)
+    if (couponCode) {
+        try {
+            couponInfo = await validateAndCalculateCoupon({
+                couponCode,
+                driverId,
+                orderAmountRupees: finalAmountRupees,   // coupon sees GST-included amount
+            });
+        } catch (err) {
+            return res.status(400).json({
+                success: false,
+                message: err.message || "Invalid coupon",
+            });
+        }
     }
 
-    // final amount in paise
     const finalAmountPaise = Math.round(couponInfo.finalAmount * 100);
 
-    // safety: never 0 amount for razorpay
     if (finalAmountPaise < 100) {
         return res.status(400).json({
             success: false,
@@ -1150,86 +1197,133 @@ exports.createPaymentOrder = asyncHandler(async (req, res) => {
         });
     }
 
-    console.log("ouponInfo", couponInfo)
-    const order = await instance.orders.create({
-        amount: finalAmountPaise,
-        currency: "INR",
-        receipt: `receipt_${Date.now()}`,
-        notes: {
-            driverId,
-            themeId,
-            durationMonths,
-            websiteId,
-            slug,
-            upgrade: !!upgrade,
-
-            // coupon info
-            couponApplied: couponInfo.applied,
-            couponCode: couponInfo.coupon?.code || "",
-            couponId: couponInfo.coupon?._id?.toString() || "",
-            discountAmount: couponInfo.discountAmount,
-            baseAmount: amountRupees,
-            finalAmount: couponInfo.finalAmount,
-        },
+    console.log("New purchase calculation:", {
+        basePrice: baseAmountRupees,
+        baseWithGST: baseAfterGST,
+        couponApplied: couponInfo.applied,
+        discount: couponInfo.discountAmount,
+        finalRupees: couponInfo.finalAmount,
+        finalPaise: finalAmountPaise,
     });
 
-
-    // ✅ Save slug on order create
-    const website = await Website.findById(websiteId);
-    if (!website) {
-        return res.status(404).json({ success: false, message: "Website not found" });
-    }
-
-    if (!upgrade) {
-        website.website_url = slug;
-    }
-
-    // ✅ Save pending subscription
-    website.subscription = {
-        planType: theme.planType || "basic",
-        durationMonths: Number(durationMonths),
+    // Create order + save
+    await createRazorpayOrderAndSave({
+        res,
+        driverId,
         themeId,
-        orderId: order.id,
-        paymentId: "",
-        amountPay: couponInfo.finalAmount,       // ✅ FINAL AMOUNT
-        amountPayPaise: finalAmountPaise,
-        status: "pending",
-        paidTill: null,
-        coupon: couponInfo.applied
-            ? {
-                couponId: couponInfo.coupon._id,
-                code: couponInfo.coupon.code,
-                discountAmount: couponInfo.discountAmount,
-                baseAmount: amountRupees,
-                finalAmount: couponInfo.finalAmount,
-            }
-            : null,
-        purchasedAt: new Date(),
-    };
-
-    // Optional: history me bhi daal do
-    website.subscriptionHistory.push(website.subscription);
-
-    await website.save();
-
-    res.status(201).json({
-        success: true,
-        data: {
-            orderId: order.id,
-            amount: order.amount,
-            currency: order.currency,
-            key_id: ENV.RAZORPAY_KEY_ID,
-            coupon: couponInfo.applied
-                ? {
-                    code: couponInfo.coupon.code,
-                    discountAmount: couponInfo.discountAmount,
-                    baseAmount: amountRupees,
-                    finalAmount: couponInfo.finalAmount,
-                }
-                : null,
-        },
+        durationMonths,
+        websiteId,
+        slug,
+        upgrade: false,
+        finalAmountPaise,
+        couponCode,
+        baseAmountRupees,
+        gstAmountRupees: baseAfterGST - baseAmountRupees,
+        couponInfo,
     });
 });
+
+// ────────────────────────────────────────────────
+//  Reusable helper to avoid code duplication
+// ────────────────────────────────────────────────
+async function createRazorpayOrderAndSave({
+    res,
+    driverId,
+    themeId,
+    durationMonths,
+    websiteId,
+    slug,
+    upgrade,
+    finalAmountPaise,
+    couponCode,
+    baseAmountRupees,
+    gstAmountRupees = 0,
+    couponInfo = { applied: false, discountAmount: 0, finalAmount: finalAmountPaise / 100 },
+}) {
+    try {
+        const order = await instance.orders.create({
+            amount: finalAmountPaise,
+            currency: "INR",
+            receipt: `receipt_${Date.now()}`,
+            notes: {
+                driverId,
+                themeId,
+                durationMonths,
+                websiteId,
+                slug,
+                upgrade: !!upgrade,
+                couponApplied: couponInfo.applied,
+                couponCode: couponInfo.coupon?.code || couponCode || "",
+                couponId: couponInfo.coupon?._id?.toString() || "",
+                discountAmount: couponInfo.discountAmount,
+                baseAmount: baseAmountRupees || couponInfo.finalAmount,
+                gstAmount: gstAmountRupees,
+                finalAmount: couponInfo.finalAmount,
+            },
+        });
+
+        // Save to website document
+        const website = await Website.findById(websiteId);
+        if (!website) {
+            return res.status(404).json({ success: false, message: "Website not found" });
+        }
+
+        if (!upgrade && slug) {
+            website.website_url = slug.trim().toLowerCase();
+        }
+
+        website.subscription = {
+            planType: "basic", // adjust if needed
+            durationMonths: Number(durationMonths),
+            themeId,
+            orderId: order.id,
+            paymentId: "",
+            amountPay: couponInfo.finalAmount,
+            amountPayPaise: finalAmountPaise,
+            status: "pending",
+            paidTill: null,
+            coupon: couponInfo.applied
+                ? {
+                      couponId: couponInfo.coupon?._id,
+                      code: couponInfo.coupon?.code || couponCode,
+                      discountAmount: couponInfo.discountAmount,
+                      baseAmount: baseAmountRupees || couponInfo.finalAmount,
+                      finalAmount: couponInfo.finalAmount,
+                  }
+                : null,
+            purchasedAt: new Date(),
+        };
+
+        website.subscriptionHistory.push(website.subscription);
+
+        await website.save();
+
+        res.status(201).json({
+            success: true,
+            data: {
+                orderId: order.id,
+                amount: order.amount,
+                currency: order.currency,
+                key_id: ENV.RAZORPAY_KEY_ID,
+                coupon: couponInfo.applied
+                    ? {
+                          code: couponInfo.coupon?.code || couponCode,
+                          discountAmount: couponInfo.discountAmount,
+                          baseAmount: baseAmountRupees || couponInfo.finalAmount,
+                          finalAmount: couponInfo.finalAmount,
+                      }
+                    : null,
+            },
+        });
+    } catch (err) {
+        console.error("Razorpay order creation failed:", err);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to create Razorpay order",
+        });
+    }
+}
+
 exports.verifyPayment = asyncHandler(async (req, res) => {
     const {
         driverId,
