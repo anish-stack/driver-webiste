@@ -945,7 +945,7 @@ exports.getSocialLinks = asyncHandler(async (req, res) => {
 exports.checkWebsiteUrlPresentOrNot = async (req, res) => {
     try {
         let { slug } = req.body;
-        console.log(slug)
+
         slug = (slug || "").toString().trim().toLowerCase();
 
         if (!slug) {
@@ -966,7 +966,7 @@ exports.checkWebsiteUrlPresentOrNot = async (req, res) => {
         }
 
         // Check if already exists
-        const websiteFound = await Website.findOne({ website_url: slug }).lean();
+        const websiteFound = await Website.findOne({ website_url: slug, isLive: true }).lean();
 
         // If available
         if (!websiteFound) {
@@ -1284,12 +1284,12 @@ async function createRazorpayOrderAndSave({
             paidTill: null,
             coupon: couponInfo.applied
                 ? {
-                      couponId: couponInfo.coupon?._id,
-                      code: couponInfo.coupon?.code || couponCode,
-                      discountAmount: couponInfo.discountAmount,
-                      baseAmount: baseAmountRupees || couponInfo.finalAmount,
-                      finalAmount: couponInfo.finalAmount,
-                  }
+                    couponId: couponInfo.coupon?._id,
+                    code: couponInfo.coupon?.code || couponCode,
+                    discountAmount: couponInfo.discountAmount,
+                    baseAmount: baseAmountRupees || couponInfo.finalAmount,
+                    finalAmount: couponInfo.finalAmount,
+                }
                 : null,
             purchasedAt: new Date(),
         };
@@ -1307,11 +1307,11 @@ async function createRazorpayOrderAndSave({
                 key_id: ENV.RAZORPAY_KEY_ID,
                 coupon: couponInfo.applied
                     ? {
-                          code: couponInfo.coupon?.code || couponCode,
-                          discountAmount: couponInfo.discountAmount,
-                          baseAmount: baseAmountRupees || couponInfo.finalAmount,
-                          finalAmount: couponInfo.finalAmount,
-                      }
+                        code: couponInfo.coupon?.code || couponCode,
+                        discountAmount: couponInfo.discountAmount,
+                        baseAmount: baseAmountRupees || couponInfo.finalAmount,
+                        finalAmount: couponInfo.finalAmount,
+                    }
                     : null,
             },
         });
