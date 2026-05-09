@@ -52,6 +52,31 @@ app.use("/api/website", WebsiteRoutes)
 app.use("/api/contact", ContactRoutes)
 app.use("/api/trip", TripRoutes)
 
+
+app.get("/", (req, res) => {
+  try {
+    console.log("Method:", req.method);
+    console.log("URL:", req.originalUrl);
+    console.log("Headers:", req.headers);
+    console.log("Query:", req.query);
+    console.log("Params:", req.params);
+    console.log("Body:", req.body);
+    console.log("IP:", req.ip);
+
+    res.json({
+      success: true,
+      message: "Logged all request methods",
+    });
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 app.use("/api/v1/admin/coupon", require("./routes/coupon.routes"));
 
 /* -------------------- 404 Handler -------------------- */

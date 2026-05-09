@@ -27,6 +27,7 @@ const {
   changeThemeAndCalculatePrice,
   getWebsiteBySlug,
   updateWebsiteUrl,
+  razorpayWebhook,
 
 } = require("../controllers/website.controller");
 
@@ -88,6 +89,7 @@ router.get(
 
 router.post("/payment/create-order", createPaymentOrder);
 router.post("/payment/verify", verifyPayment);
+router.post("/payment/webhook",razorpayWebhook)
 router.get("/subscription/:driverId", getSubscriptionStatus);
 router.put("/update-webiste-url/:driverId", updateWebsiteUrl)
 
